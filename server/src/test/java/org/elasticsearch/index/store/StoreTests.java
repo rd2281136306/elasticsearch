@@ -40,13 +40,13 @@ import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.index.SnapshotDeletionPolicy;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.store.BaseDirectoryWrapper;
-import org.apache.lucene.store.ByteBufferIndexInput;
 import org.apache.lucene.store.ChecksumIndexInput;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FilterDirectory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
-import org.apache.lucene.store.MMapDirectory;
+import org.apache.lucene.store.NIOFSDirectory;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.TestUtil;
@@ -823,10 +823,7 @@ public class StoreTests extends ESTestCase {
         Map<String, StoreFileMetaData> storeFileMetaDataMap = new HashMap<>();
         storeFileMetaDataMap.put(storeFileMetaData1.name(), storeFileMetaData1);
         storeFileMetaDataMap.put(storeFileMetaData2.name(), storeFileMetaData2);
-        Map<String, String> commitUserData = new HashMap<>();
-        commitUserData.put("userdata_1", "test");
-        commitUserData.put("userdata_2", "test");
-        return new Store.MetadataSnapshot(unmodifiableMap(storeFileMetaDataMap), unmodifiableMap(commitUserData), 0);
+        return new Store.MetadataSnapshot(unmodifiableMap(storeFileMetaDataMap), Map.of("userdata_1", "test", "userdata_2", "test"), 0);
     }
 
     public void testUserDataRead() throws IOException {
@@ -872,7 +869,7 @@ public class StoreTests extends ESTestCase {
         InputStreamStreamInput in = new InputStreamStreamInput(inBuffer);
         in.setVersion(targetNodeVersion);
         TransportNodesListShardStoreMetaData.StoreFilesMetaData inStoreFileMetaData =
-            TransportNodesListShardStoreMetaData.StoreFilesMetaData.readStoreFilesMetaData(in);
+            new TransportNodesListShardStoreMetaData.StoreFilesMetaData(in);
         Iterator<StoreFileMetaData> outFiles = outStoreFileMetaData.iterator();
         for (StoreFileMetaData inFile : inStoreFileMetaData) {
             assertThat(inFile.name(), equalTo(outFiles.next().name()));
@@ -1032,38 +1029,6 @@ public class StoreTests extends ESTestCase {
         store.close();
     }
 
-    public void testEnsureIndexHasHistoryUUID() throws IOException {
-        final ShardId shardId = new ShardId("index", "_na_", 1);
-        try (Store store = new Store(shardId, INDEX_SETTINGS, StoreTests.newDirectory(random()), new DummyShardLock(shardId))) {
-
-            store.createEmpty(Version.LATEST);
-
-            // remove the history uuid
-            IndexWriterConfig iwc = new IndexWriterConfig(null)
-                .setCommitOnClose(false)
-                // we don't want merges to happen here - we call maybe merge on the engine
-                // later once we stared it up otherwise we would need to wait for it here
-                // we also don't specify a codec here and merges should use the engines for this index
-                .setMergePolicy(NoMergePolicy.INSTANCE)
-                .setOpenMode(IndexWriterConfig.OpenMode.APPEND);
-            try (IndexWriter writer = new IndexWriter(store.directory(), iwc)) {
-                Map<String, String> newCommitData = new HashMap<>();
-                for (Map.Entry<String, String> entry : writer.getLiveCommitData()) {
-                    if (entry.getKey().equals(Engine.HISTORY_UUID_KEY) == false) {
-                        newCommitData.put(entry.getKey(), entry.getValue());
-                    }
-                }
-                writer.setLiveCommitData(newCommitData.entrySet());
-                writer.commit();
-            }
-
-            store.ensureIndexHasHistoryUUID();
-
-            SegmentInfos segmentInfos = Lucene.readSegmentInfos(store.directory());
-            assertThat(segmentInfos.getUserData(), hasKey(Engine.HISTORY_UUID_KEY));
-        }
-    }
-
     public void testHistoryUUIDCanBeForced() throws IOException {
         final ShardId shardId = new ShardId("index", "_na_", 1);
         try (Store store = new Store(shardId, INDEX_SETTINGS, StoreTests.newDirectory(random()), new DummyShardLock(shardId))) {
@@ -1082,44 +1047,14 @@ public class StoreTests extends ESTestCase {
         }
     }
 
-    public void testDeoptimizeMMap() throws IOException {
-        IndexSettings indexSettings = IndexSettingsModule.newIndexSettings("index",
-            Settings.builder().put(IndexMetaData.SETTING_VERSION_CREATED, org.elasticsearch.Version.CURRENT)
-                .put(Store.FORCE_RAM_TERM_DICT.getKey(), true).build());
+    public void testGetPendingFiles() throws IOException {
         final ShardId shardId = new ShardId("index", "_na_", 1);
-        String file = "test." + (randomBoolean() ? "tip" : "cfs");
-        try (Store store = new Store(shardId, indexSettings, new MMapDirectory(createTempDir()), new DummyShardLock(shardId))) {
-            try (IndexOutput output = store.directory().createOutput(file, IOContext.DEFAULT)) {
-                output.writeInt(0);
-            }
-            try (IndexOutput output = store.directory().createOutput("someOtherFile.txt", IOContext.DEFAULT)) {
-                output.writeInt(0);
-            }
-            try (IndexInput input = store.directory().openInput(file, IOContext.DEFAULT)) {
-                assertFalse(input instanceof ByteBufferIndexInput);
-                assertFalse(input.clone() instanceof ByteBufferIndexInput);
-                assertFalse(input.slice("foo", 1, 1) instanceof ByteBufferIndexInput);
-            }
-
-            try (IndexInput input = store.directory().openInput("someOtherFile.txt", IOContext.DEFAULT)) {
-                assertTrue(input instanceof ByteBufferIndexInput);
-                assertTrue(input.clone() instanceof ByteBufferIndexInput);
-                assertTrue(input.slice("foo", 1, 1) instanceof ByteBufferIndexInput);
-            }
-        }
-
-        indexSettings = IndexSettingsModule.newIndexSettings("index",
-            Settings.builder().put(IndexMetaData.SETTING_VERSION_CREATED, org.elasticsearch.Version.CURRENT)
-                .put(Store.FORCE_RAM_TERM_DICT.getKey(), false).build());
-
-        try (Store store = new Store(shardId, indexSettings, new MMapDirectory(createTempDir()), new DummyShardLock(shardId))) {
-            try (IndexOutput output = store.directory().createOutput(file, IOContext.DEFAULT)) {
-                output.writeInt(0);
-            }
-            try (IndexInput input = store.directory().openInput(file, IOContext.DEFAULT)) {
-                assertTrue(input instanceof ByteBufferIndexInput);
-                assertTrue(input.clone() instanceof ByteBufferIndexInput);
-                assertTrue(input.slice("foo", 1, 1) instanceof ByteBufferIndexInput);
+        final String testfile = "testfile";
+        try (Store store = new Store(shardId, INDEX_SETTINGS, new NIOFSDirectory(createTempDir()), new DummyShardLock(shardId))) {
+            store.directory().createOutput(testfile, IOContext.DEFAULT).close();
+            try (IndexInput input = store.directory().openInput(testfile, IOContext.DEFAULT)) {
+                store.directory().deleteFile(testfile);
+                assertEquals(FilterDirectory.unwrap(store.directory()).getPendingDeletions(), store.directory().getPendingDeletions());
             }
         }
     }

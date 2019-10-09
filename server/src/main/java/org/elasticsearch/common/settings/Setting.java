@@ -45,7 +45,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -114,6 +113,11 @@ public class Setting<T> implements ToXContentObject {
         NodeScope,
 
         /**
+         * Secure setting values equal on all nodes
+         */
+        Consistent,
+
+        /**
          * Index scope
          */
         IndexScope,
@@ -168,6 +172,7 @@ public class Setting<T> implements ToXContentObject {
             checkPropertyRequiresIndexScope(propertiesAsSet, Property.NotCopyableOnResize);
             checkPropertyRequiresIndexScope(propertiesAsSet, Property.InternalIndex);
             checkPropertyRequiresIndexScope(propertiesAsSet, Property.PrivateIndex);
+            checkPropertyRequiresNodeScope(propertiesAsSet, Property.Consistent);
             this.properties = propertiesAsSet;
         }
     }
@@ -175,6 +180,12 @@ public class Setting<T> implements ToXContentObject {
     private void checkPropertyRequiresIndexScope(final EnumSet<Property> properties, final Property property) {
         if (properties.contains(property) && properties.contains(Property.IndexScope) == false) {
             throw new IllegalArgumentException("non-index-scoped setting [" + key + "] can not have property [" + property + "]");
+        }
+    }
+
+    private void checkPropertyRequiresNodeScope(final EnumSet<Property> properties, final Property property) {
+        if (properties.contains(property) && properties.contains(Property.NodeScope) == false) {
+            throw new IllegalArgumentException("non-node-scoped setting [" + key + "] can not have property [" + property + "]");
         }
     }
 
@@ -323,6 +334,14 @@ public class Setting<T> implements ToXContentObject {
     }
 
     /**
+     * Returns <code>true</code> if this setting's value can be checked for equality across all nodes. Only {@link SecureSetting} instances
+     * may have this qualifier.
+     */
+    public boolean isConsistent() {
+        return properties.contains(Property.Consistent);
+    }
+
+    /**
      * Returns <code>true</code> if this setting has an index scope, otherwise <code>false</code>
      */
     public boolean hasIndexScope() {
@@ -385,7 +404,9 @@ public class Setting<T> implements ToXContentObject {
      * @return true if the setting is present in the given settings instance, otherwise false
      */
     public boolean exists(final Settings settings) {
-        return settings.keySet().contains(getKey());
+        SecureSettings secureSettings = settings.getSecureSettings();
+        return settings.keySet().contains(getKey()) &&
+            (secureSettings == null || secureSettings.getSettingNames().contains(getKey()) == false);
     }
 
     /**
@@ -411,12 +432,12 @@ public class Setting<T> implements ToXContentObject {
         try {
             T parsed = parser.apply(value);
             if (validate) {
-                final Iterator<Setting<T>> it = validator.settings();
-                final Map<Setting<T>, T> map;
+                final Iterator<Setting<?>> it = validator.settings();
+                final Map<Setting<?>, Object> map;
                 if (it.hasNext()) {
                     map = new HashMap<>();
                     while (it.hasNext()) {
-                        final Setting<T> setting = it.next();
+                        final Setting<?> setting = it.next();
                         map.put(setting, setting.get(settings, false)); // we have to disable validation or we will stack overflow
                     }
                 } else {
@@ -454,7 +475,7 @@ public class Setting<T> implements ToXContentObject {
      * Returns the raw (string) settings value. If the setting is not present in the given settings object the default value is returned
      * instead. This is useful if the value can't be parsed due to an invalid value to access the actual value.
      */
-    public final String getRaw(final Settings settings) {
+    private String getRaw(final Settings settings) {
         checkDeprecation(settings);
         return innerGetRaw(settings);
     }
@@ -467,6 +488,11 @@ public class Setting<T> implements ToXContentObject {
      * @return the raw string representation of the setting value
      */
     String innerGetRaw(final Settings settings) {
+        SecureSettings secureSettings = settings.getSecureSettings();
+        if (secureSettings != null && secureSettings.getSettingNames().contains(getKey())) {
+            throw new IllegalArgumentException("Setting [" + getKey() + "] is a non-secure setting" +
+                " and must be stored inside elasticsearch.yml, but was found inside the Elasticsearch keystore");
+        }
         return settings.get(getKey(), defaultValue.apply(settings));
     }
 
@@ -650,7 +676,7 @@ public class Setting<T> implements ToXContentObject {
             super(key, delegate.defaultValue, delegate.parser, delegate.properties.toArray(new Property[0]));
             this.key = key;
             this.delegateFactory = delegateFactory;
-            this.dependencies = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(dependencies)));
+            this.dependencies = Set.of(dependencies);
         }
 
         boolean isGroupSetting() {
@@ -838,7 +864,7 @@ public class Setting<T> implements ToXContentObject {
          * @param value    the value of this setting
          * @param settings a map from the settings specified by {@link #settings()}} to their values
          */
-        default void validate(T value, Map<Setting<T>, T> settings) {
+        default void validate(T value, Map<Setting<?>, Object> settings) {
         }
 
         /**
@@ -848,7 +874,7 @@ public class Setting<T> implements ToXContentObject {
          *
          * @return the settings on which the validity of this setting depends.
          */
-        default Iterator<Setting<T>> settings() {
+        default Iterator<Setting<?>> settings() {
             return Collections.emptyIterator();
         }
 
@@ -1047,6 +1073,11 @@ public class Setting<T> implements ToXContentObject {
         return new Setting<>(new SimpleKey(key), null, s -> "", Function.identity(), validator, properties);
     }
 
+    public static Setting<String> simpleString(String key, String defaultValue, Validator<String> validator, Property... properties) {
+        validator.validate(defaultValue);
+        return new Setting<>(new SimpleKey(key), null, s -> defaultValue, Function.identity(), validator, properties);
+    }
+
     public static Setting<String> simpleString(String key, Setting<String> fallback, Property... properties) {
         return simpleString(key, fallback, Function.identity(), properties);
     }
@@ -1217,6 +1248,15 @@ public class Setting<T> implements ToXContentObject {
         return listSetting(key, null, singleValueParser, (s) -> defaultStringValue, properties);
     }
 
+    public static <T> Setting<List<T>> listSetting(
+        final String key,
+        final List<String> defaultStringValue,
+        final Function<String, T> singleValueParser,
+        final Validator<List<T>> validator,
+        final Property... properties) {
+        return listSetting(key, null, singleValueParser, (s) -> defaultStringValue, validator, properties);
+    }
+
     // TODO this one's two argument get is still broken
     public static <T> Setting<List<T>> listSetting(
             final String key,
@@ -1240,13 +1280,23 @@ public class Setting<T> implements ToXContentObject {
             final Function<String, T> singleValueParser,
             final Function<Settings, List<String>> defaultStringValue,
             final Property... properties) {
+        return listSetting(key, fallbackSetting, singleValueParser, defaultStringValue, v -> {}, properties);
+    }
+
+    static <T> Setting<List<T>> listSetting(
+        final String key,
+        final @Nullable Setting<List<T>> fallbackSetting,
+        final Function<String, T> singleValueParser,
+        final Function<Settings, List<String>> defaultStringValue,
+        final Validator<List<T>> validator,
+        final Property... properties) {
         if (defaultStringValue.apply(Settings.EMPTY) == null) {
             throw new IllegalArgumentException("default value function must not return null");
         }
         Function<String, List<T>> parser = (s) ->
-                parseableStringToList(s).stream().map(singleValueParser).collect(Collectors.toList());
+            parseableStringToList(s).stream().map(singleValueParser).collect(Collectors.toList());
 
-        return new ListSetting<>(key, fallbackSetting, defaultStringValue, parser, properties);
+        return new ListSetting<>(key, fallbackSetting, defaultStringValue, parser, validator, properties);
     }
 
     private static List<String> parseableStringToList(String parsableString) {
@@ -1293,13 +1343,14 @@ public class Setting<T> implements ToXContentObject {
                 final @Nullable Setting<List<T>> fallbackSetting,
                 final Function<Settings, List<String>> defaultStringValue,
                 final Function<String, List<T>> parser,
+                final Validator<List<T>> validator,
                 final Property... properties) {
             super(
                     new ListKey(key),
                     fallbackSetting,
                     s -> Setting.arrayToParsableString(defaultStringValue.apply(s)),
                     parser,
-                    v -> {},
+                    validator,
                     properties);
             this.defaultStringValue = defaultStringValue;
         }

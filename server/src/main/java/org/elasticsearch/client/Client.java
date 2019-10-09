@@ -77,11 +77,9 @@ import java.util.Map;
  * simply returns an {@link org.elasticsearch.action.ActionFuture}, while the second accepts an
  * {@link org.elasticsearch.action.ActionListener}.
  * <p>
- * A client can either be retrieved from a {@link org.elasticsearch.node.Node} started, or connected remotely
- * to one or more nodes using {@link org.elasticsearch.client.transport.TransportClient}.
+ * A client can be retrieved from a started {@link org.elasticsearch.node.Node}.
  *
  * @see org.elasticsearch.node.Node#client()
- * @see org.elasticsearch.client.transport.TransportClient
  */
 public interface Client extends ElasticsearchClient, Releasable {
 
@@ -233,9 +231,9 @@ public interface Client extends ElasticsearchClient, Releasable {
     BulkRequestBuilder prepareBulk();
 
     /**
-     * Executes a bulk of index / delete operations with default index and/or type
+     * Executes a bulk of index / delete operations with default index
      */
-    BulkRequestBuilder prepareBulk(@Nullable String globalIndex, @Nullable String globalType);
+    BulkRequestBuilder prepareBulk(@Nullable String globalIndex);
 
     /**
      * Gets the document that was indexed from an index with a type and id.
@@ -261,9 +259,9 @@ public interface Client extends ElasticsearchClient, Releasable {
     GetRequestBuilder prepareGet();
 
     /**
-     * Gets the document that was indexed from an index with a type (optional) and id.
+     * Gets the document that was indexed from an index with an id.
      */
-    GetRequestBuilder prepareGet(String index, @Nullable String type, String id);
+    GetRequestBuilder prepareGet(String index, String id);
 
     /**
      * Multi get documents.
@@ -365,10 +363,9 @@ public interface Client extends ElasticsearchClient, Releasable {
      * Builder for the term vector request.
      *
      * @param index The index to load the document from
-     * @param type  The type of the document
      * @param id    The id of the document
      */
-    TermVectorsRequestBuilder prepareTermVectors(String index, String type, String id);
+    TermVectorsRequestBuilder prepareTermVectors(String index, String id);
 
     /**
      * Multi get term vectors.
@@ -389,10 +386,9 @@ public interface Client extends ElasticsearchClient, Releasable {
      * Computes a score explanation for the specified request.
      *
      * @param index The index this explain is targeted for
-     * @param type  The type this explain is targeted for
      * @param id    The document identifier this explain is targeted for
      */
-    ExplainRequestBuilder prepareExplain(String index, String type, String id);
+    ExplainRequestBuilder prepareExplain(String index, String id);
 
     /**
      * Computes a score explanation for the specified request.

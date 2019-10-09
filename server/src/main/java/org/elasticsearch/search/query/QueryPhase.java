@@ -95,7 +95,6 @@ public class QueryPhase implements SearchPhase {
     public void execute(SearchContext searchContext) throws QueryPhaseExecutionException {
         if (searchContext.hasOnlySuggest()) {
             suggestPhase.execute(searchContext);
-            // TODO: fix this once we can fetch docs for suggestions
             searchContext.queryResult().topDocs(new TopDocsAndMaxScore(
                     new TopDocs(new TotalHits(0, TotalHits.Relation.EQUAL_TO), Lucene.EMPTY_SCORE_DOCS), Float.NaN),
                     new DocValueFormat[0]);
@@ -276,11 +275,15 @@ public class QueryPhase implements SearchPhase {
 
                 if (searchContext.request().allowPartialSearchResults() == false) {
                     // Can't rethrow TimeExceededException because not serializable
-                    throw new QueryPhaseExecutionException(searchContext, "Time exceeded");
+                    throw new QueryPhaseExecutionException(searchContext.shardTarget(), "Time exceeded");
                 }
                 queryResult.searchTimedOut(true);
             } finally {
                 searchContext.clearReleasables(SearchContext.Lifetime.COLLECTION);
+            }
+            if (searchContext.terminateAfter() != SearchContext.DEFAULT_TERMINATE_AFTER
+                    && queryResult.terminatedEarly() == null) {
+                queryResult.terminatedEarly(false);
             }
 
             final QuerySearchResult result = searchContext.queryResult();
@@ -299,7 +302,7 @@ public class QueryPhase implements SearchPhase {
             }
             return topDocsFactory.shouldRescore();
         } catch (Exception e) {
-            throw new QueryPhaseExecutionException(searchContext, "Failed to execute main query", e);
+            throw new QueryPhaseExecutionException(searchContext.shardTarget(), "Failed to execute main query", e);
         }
     }
 

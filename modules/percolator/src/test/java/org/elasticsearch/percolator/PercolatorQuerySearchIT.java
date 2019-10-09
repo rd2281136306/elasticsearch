@@ -44,7 +44,6 @@ import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import static org.elasticsearch.common.xcontent.XContentFactory.smileBuilder;
 import static org.elasticsearch.common.xcontent.XContentFactory.yamlBuilder;
 import static org.elasticsearch.index.query.QueryBuilders.boolQuery;
-import static org.elasticsearch.index.query.QueryBuilders.commonTermsQuery;
 import static org.elasticsearch.index.query.QueryBuilders.geoBoundingBoxQuery;
 import static org.elasticsearch.index.query.QueryBuilders.geoDistanceQuery;
 import static org.elasticsearch.index.query.QueryBuilders.geoPolygonQuery;
@@ -304,14 +303,14 @@ public class PercolatorQuerySearchIT extends ESIntegTestCase {
 
         logger.info("percolating empty doc");
         SearchResponse response = client().prepareSearch()
-                .setQuery(new PercolateQueryBuilder("query", "test", "type", "1", null, null, null))
+                .setQuery(new PercolateQueryBuilder("query", "test", "1", null, null, null))
                 .get();
         assertHitCount(response, 1);
         assertThat(response.getHits().getAt(0).getId(), equalTo("1"));
 
         logger.info("percolating doc with 1 field");
         response = client().prepareSearch()
-                .setQuery(new PercolateQueryBuilder("query", "test", "type", "5", null, null, null))
+                .setQuery(new PercolateQueryBuilder("query", "test", "5", null, null, null))
                 .addSort("_id", SortOrder.ASC)
                 .get();
         assertHitCount(response, 2);
@@ -320,7 +319,7 @@ public class PercolatorQuerySearchIT extends ESIntegTestCase {
 
         logger.info("percolating doc with 2 fields");
         response = client().prepareSearch()
-                .setQuery(new PercolateQueryBuilder("query", "test", "type", "6", null, null, null))
+                .setQuery(new PercolateQueryBuilder("query", "test", "6", null, null, null))
                 .addSort("_id", SortOrder.ASC)
                 .get();
         assertHitCount(response, 3);
@@ -344,7 +343,7 @@ public class PercolatorQuerySearchIT extends ESIntegTestCase {
         logger.info("percolating empty doc with source disabled");
         IllegalArgumentException e = expectThrows(IllegalArgumentException.class, () -> {
             client().prepareSearch()
-                .setQuery(new PercolateQueryBuilder("query", "test", "type", "1", null, null, null))
+                .setQuery(new PercolateQueryBuilder("query", "test", "1", null, null, null))
                 .get();
         });
         assertThat(e.getMessage(), containsString("source disabled"));
@@ -356,13 +355,10 @@ public class PercolatorQuerySearchIT extends ESIntegTestCase {
         );
 
         client().prepareIndex("test", "type", "1")
-                .setSource(jsonBuilder().startObject().field("query", commonTermsQuery("field1", "quick brown fox")).endObject())
-                .get();
-        client().prepareIndex("test", "type", "2")
                 .setSource(jsonBuilder().startObject().field("query", multiMatchQuery("quick brown fox", "field1", "field2")
                         .type(MultiMatchQueryBuilder.Type.CROSS_FIELDS)).endObject())
                 .get();
-        client().prepareIndex("test", "type", "3")
+        client().prepareIndex("test", "type", "2")
                 .setSource(jsonBuilder().startObject().field("query",
                         spanNearQuery(spanTermQuery("field1", "quick"), 0)
                                 .addClause(spanTermQuery("field1", "brown"))
@@ -372,7 +368,7 @@ public class PercolatorQuerySearchIT extends ESIntegTestCase {
                 .get();
         client().admin().indices().prepareRefresh().get();
 
-        client().prepareIndex("test", "type", "4")
+        client().prepareIndex("test", "type", "3")
                 .setSource(jsonBuilder().startObject().field("query",
                         spanNotQuery(
                                 spanNearQuery(spanTermQuery("field1", "quick"), 0)
@@ -387,7 +383,7 @@ public class PercolatorQuerySearchIT extends ESIntegTestCase {
                 .get();
 
         // doesn't match
-        client().prepareIndex("test", "type", "5")
+        client().prepareIndex("test", "type", "4")
                 .setSource(jsonBuilder().startObject().field("query",
                         spanNotQuery(
                                 spanNearQuery(spanTermQuery("field1", "quick"), 0)
@@ -410,15 +406,13 @@ public class PercolatorQuerySearchIT extends ESIntegTestCase {
                 .setQuery(new PercolateQueryBuilder("query", source, XContentType.JSON))
                 .addSort("_id", SortOrder.ASC)
                 .get();
-        assertHitCount(response, 4);
+        assertHitCount(response, 3);
         assertThat(response.getHits().getAt(0).getId(), equalTo("1"));
         assertThat(response.getHits().getAt(0).getScore(), equalTo(Float.NaN));
         assertThat(response.getHits().getAt(1).getId(), equalTo("2"));
         assertThat(response.getHits().getAt(1).getScore(), equalTo(Float.NaN));
         assertThat(response.getHits().getAt(2).getId(), equalTo("3"));
         assertThat(response.getHits().getAt(2).getScore(), equalTo(Float.NaN));
-        assertThat(response.getHits().getAt(3).getId(), equalTo("4"));
-        assertThat(response.getHits().getAt(3).getScore(), equalTo(Float.NaN));
     }
 
     public void testPercolatorQueryWithHighlighting() throws Exception {
@@ -671,7 +665,6 @@ public class PercolatorQuerySearchIT extends ESIntegTestCase {
                 .get();
         assertHitCount(response, 1);
         assertThat(response.getHits().getAt(0).getId(), equalTo("1"));
-        assertThat(response.getHits().getAt(0).getType(), equalTo("type"));
         assertThat(response.getHits().getAt(0).getIndex(), equalTo("test1"));
 
         response = client().prepareSearch()
@@ -680,7 +673,6 @@ public class PercolatorQuerySearchIT extends ESIntegTestCase {
                 .get();
         assertHitCount(response, 1);
         assertThat(response.getHits().getAt(0).getId(), equalTo("1"));
-        assertThat(response.getHits().getAt(0).getType(), equalTo("type"));
         assertThat(response.getHits().getAt(0).getIndex(), equalTo("test2"));
 
         // Unacceptable:
@@ -814,9 +806,9 @@ public class PercolatorQuerySearchIT extends ESIntegTestCase {
                 .setQuery(new PercolateQueryBuilder("query",
                     BytesReference.bytes(jsonBuilder().startObject().field("field1", "d").endObject()), XContentType.JSON)))
             .add(client().prepareSearch("test")
-                .setQuery(new PercolateQueryBuilder("query", "test", "type", "5", null, null, null)))
+                .setQuery(new PercolateQueryBuilder("query", "test", "5", null, null, null)))
             .add(client().prepareSearch("test") // non existing doc, so error element
-                .setQuery(new PercolateQueryBuilder("query", "test", "type", "6", null, null, null)))
+                .setQuery(new PercolateQueryBuilder("query", "test", "6", null, null, null)))
             .get();
 
         MultiSearchResponse.Item item = response.getResponses()[0];
@@ -847,7 +839,7 @@ public class PercolatorQuerySearchIT extends ESIntegTestCase {
         item = response.getResponses()[5];
         assertThat(item.getResponse(), nullValue());
         assertThat(item.getFailureMessage(), notNullValue());
-        assertThat(item.getFailureMessage(), containsString("[test/type/6] couldn't be found"));
+        assertThat(item.getFailureMessage(), containsString("[test/6] couldn't be found"));
     }
 
 }

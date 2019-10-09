@@ -208,13 +208,13 @@ public class SettingTests extends ESTestCase {
         public static boolean invokedWithDependencies;
 
         @Override
-        public void validate(String value) {
+        public void validate(final String value) {
             invokedInIsolation = true;
             assertThat(value, equalTo("foo.bar value"));
         }
 
         @Override
-        public void validate(String value, Map<Setting<String>, String> settings) {
+        public void validate(final String value, final Map<Setting<?>, Object> settings) {
             invokedWithDependencies = true;
             assertTrue(settings.keySet().contains(BAZ_QUX_SETTING));
             assertThat(settings.get(BAZ_QUX_SETTING), equalTo("baz.qux value"));
@@ -223,8 +223,9 @@ public class SettingTests extends ESTestCase {
         }
 
         @Override
-        public Iterator<Setting<String>> settings() {
-            return Arrays.asList(BAZ_QUX_SETTING, QUUX_QUUZ_SETTING).iterator();
+        public Iterator<Setting<?>> settings() {
+            final List<Setting<?>> settings = List.of(BAZ_QUX_SETTING, QUUX_QUUZ_SETTING);
+            return settings.iterator();
         }
     }
 
@@ -703,7 +704,6 @@ public class SettingTests extends ESTestCase {
         Setting.AffixSetting<List<String>> listAffixSetting = Setting.affixKeySetting("foo.", "bar",
             (key) -> Setting.listSetting(key, Collections.singletonList("testelement"), Function.identity(), Property.NodeScope));
         expectThrows(UnsupportedOperationException.class, () -> listAffixSetting.get(Settings.EMPTY));
-        expectThrows(UnsupportedOperationException.class, () -> listAffixSetting.getRaw(Settings.EMPTY));
         assertEquals(Collections.singletonList("testelement"), listAffixSetting.getDefault(Settings.EMPTY));
         assertEquals("[\"testelement\"]", listAffixSetting.getDefaultRaw(Settings.EMPTY));
     }
@@ -910,6 +910,13 @@ public class SettingTests extends ESTestCase {
         assertTrue(fooSetting.exists(Settings.builder().put("foo", "bar").build()));
     }
 
+    public void testExistsWithSecure() {
+        final MockSecureSettings secureSettings = new MockSecureSettings();
+        secureSettings.setString("foo", "foo");
+        Setting<String> fooSetting = Setting.simpleString("foo", Property.NodeScope);
+        assertFalse(fooSetting.exists(Settings.builder().setSecureSettings(secureSettings).build()));
+    }
+
     public void testExistsWithFallback() {
         final int count = randomIntBetween(1, 16);
         Setting<String> current = Setting.simpleString("fallback0", Property.NodeScope);
@@ -962,6 +969,15 @@ public class SettingTests extends ESTestCase {
         final String value = updatedSettings.get(key);
         assertEquals("_foo", key);
         assertEquals("", value);
+    }
+
+    public void testNonSecureSettingInKeystore() {
+        MockSecureSettings secureSettings = new MockSecureSettings();
+        secureSettings.setString("foo", "bar");
+        final Settings settings = Settings.builder().setSecureSettings(secureSettings).build();
+        Setting<String> setting = Setting.simpleString("foo", Property.NodeScope);
+        IllegalArgumentException e = expectThrows(IllegalArgumentException.class, () -> setting.get(settings));
+        assertThat(e.getMessage(), containsString("must be stored inside elasticsearch.yml"));
     }
 
 }

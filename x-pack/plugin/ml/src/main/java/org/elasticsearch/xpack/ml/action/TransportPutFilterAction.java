@@ -30,7 +30,6 @@ import org.elasticsearch.xpack.core.ml.utils.ToXContentParams;
 
 import java.io.IOException;
 import java.util.Collections;
-import java.util.function.Supplier;
 
 import static org.elasticsearch.xpack.core.ClientHelper.ML_ORIGIN;
 import static org.elasticsearch.xpack.core.ClientHelper.executeAsyncWithOrigin;
@@ -41,7 +40,7 @@ public class TransportPutFilterAction extends HandledTransportAction<PutFilterAc
 
     @Inject
     public TransportPutFilterAction(TransportService transportService, ActionFilters actionFilters, Client client) {
-        super(PutFilterAction.NAME, transportService, actionFilters, (Supplier<PutFilterAction.Request>) PutFilterAction.Request::new);
+        super(PutFilterAction.NAME, transportService, actionFilters, PutFilterAction.Request::new);
         this.client = client;
     }
 
@@ -68,7 +67,7 @@ public class TransportPutFilterAction extends HandledTransportAction<PutFilterAc
                     @Override
                     public void onFailure(Exception e) {
                         Exception reportedException;
-                        if (e instanceof VersionConflictEngineException) {
+                        if (ExceptionsHelper.unwrapCause(e) instanceof VersionConflictEngineException) {
                             reportedException = new ResourceAlreadyExistsException("A filter with id [" + filter.getId()
                                     + "] already exists");
                         } else {

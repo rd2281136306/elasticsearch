@@ -14,6 +14,7 @@ import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.ContextPreservingActionListener;
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.cache.Cache;
 import org.elasticsearch.common.cache.CacheBuilder;
 import org.elasticsearch.common.collect.Tuple;
@@ -35,6 +36,7 @@ import org.elasticsearch.xpack.core.security.authc.AuthenticationResult;
 import org.elasticsearch.xpack.core.security.authc.AuthenticationServiceField;
 import org.elasticsearch.xpack.core.security.authc.AuthenticationToken;
 import org.elasticsearch.xpack.core.security.authc.Realm;
+import org.elasticsearch.xpack.core.security.authz.AuthorizationEngine.EmptyAuthorizationInfo;
 import org.elasticsearch.xpack.core.security.support.Exceptions;
 import org.elasticsearch.xpack.core.security.user.AnonymousUser;
 import org.elasticsearch.xpack.core.security.user.SystemUser;
@@ -43,7 +45,6 @@ import org.elasticsearch.xpack.security.audit.AuditTrail;
 import org.elasticsearch.xpack.security.audit.AuditTrailService;
 import org.elasticsearch.xpack.security.audit.AuditUtil;
 import org.elasticsearch.xpack.security.authc.support.RealmUserLookup;
-import org.elasticsearch.xpack.core.security.authz.AuthorizationEngine.EmptyAuthorizationInfo;
 import org.elasticsearch.xpack.security.support.SecurityIndexManager;
 
 import java.util.ArrayList;
@@ -139,8 +140,8 @@ public class AuthenticationService {
     }
 
     /**
-     * Authenticates the username and password that are provided as parameters. This will not look
-     * at the values in the ThreadContext for Authentication.
+     * Authenticates the user based on the contents of the token that is provided as parameter. This will not look at the values in the
+     * ThreadContext for Authentication.
      *
      * @param action  The action of the message
      * @param message The message that resulted in this authenticate call
@@ -268,7 +269,7 @@ public class AuthenticationService {
             apiKeyService.authenticateWithApiKeyIfPresent(threadContext, ActionListener.wrap(authResult -> {
                     if (authResult.isAuthenticated()) {
                         final User user = authResult.getUser();
-                        authenticatedBy = new RealmRef("_es_api_key", "_es_api_key", nodeName);
+                        authenticatedBy = new RealmRef(ApiKeyService.API_KEY_REALM_NAME, ApiKeyService.API_KEY_REALM_TYPE, nodeName);
                         writeAuthToContext(new Authentication(user, authenticatedBy, null, Version.CURRENT,
                             Authentication.AuthenticationType.API_KEY, authResult.getMetadata()));
                     } else if (authResult.getStatus() == AuthenticationResult.Status.TERMINATE) {
@@ -346,9 +347,10 @@ public class AuthenticationService {
 
         /**
          * Consumes the {@link AuthenticationToken} provided by the caller. In the case of a {@code null} token, {@link #handleNullToken()}
-         * is called. In the case of a {@code non-null} token, the realms are iterated over and the first realm that returns a non-null
-         * {@link User} is the authenticating realm and iteration is stopped. This user is then passed to {@link #consumeUser(User, Map)}
-         * if no exception was caught while trying to authenticate the token
+         * is called. In the case of a {@code non-null} token, the realms are iterated over in the order defined in the configuration
+         * while possibly also taking into consideration the last realm that authenticated this principal. When consulting multiple realms,
+         * the first realm that returns a non-null {@link User} is the authenticating realm and iteration is stopped. This user is then
+         * passed to {@link #consumeUser(User, Map)} if no exception was caught while trying to authenticate the token
          */
         private void consumeToken(AuthenticationToken token) {
             if (token == null) {
@@ -410,6 +412,12 @@ public class AuthenticationService {
             }
         }
 
+        /**
+         * Possibly reorders the realm list depending on whether this principal has been recently authenticated by a specific realm
+         *
+         * @param principal The principal of the {@link AuthenticationToken} to be authenticated by a realm
+         * @return a list of realms ordered based on which realm should authenticate the current {@link AuthenticationToken}
+         */
         private List<Realm> getRealmList(String principal) {
             final List<Realm> orderedRealmList = this.defaultOrderedRealmList;
             if (lastSuccessfulAuthCache != null) {
@@ -484,6 +492,13 @@ public class AuthenticationService {
                     final String cause = tuple.v2() == null ? "" : " (Caused by " + tuple.v2() + ")";
                     logger.warn("Authentication to realm {} failed - {}{}", realm.name(), message, cause);
                 });
+                List<Realm> unlicensedRealms = realms.getUnlicensedRealms();
+                if (unlicensedRealms.isEmpty() == false) {
+                    logger.warn("Authentication failed using realms [{}]." +
+                            " Realms [{}] were skipped because they are not permitted on the current license",
+                        Strings.collectionToCommaDelimitedString(defaultOrderedRealmList),
+                        Strings.collectionToCommaDelimitedString(unlicensedRealms));
+                }
                 listener.onFailure(request.authenticationFailed(authenticationToken));
             } else {
                 threadContext.putTransient(AuthenticationResult.THREAD_CONTEXT_KEY, authenticationResult);

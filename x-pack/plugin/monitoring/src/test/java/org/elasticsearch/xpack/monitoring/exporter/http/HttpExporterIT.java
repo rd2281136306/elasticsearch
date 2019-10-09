@@ -81,7 +81,7 @@ import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 
 @ESIntegTestCase.ClusterScope(scope = Scope.TEST,
-                              numDataNodes = 1, numClientNodes = 0, transportClientRatio = 0.0, supportsDedicatedMasters = false)
+                              numDataNodes = 1, numClientNodes = 0, supportsDedicatedMasters = false)
 public class HttpExporterIT extends MonitoringIntegTestCase {
 
     private final List<String> clusterAlertBlacklist =
@@ -113,25 +113,15 @@ public class HttpExporterIT extends MonitoringIntegTestCase {
         return true;
     }
 
-    @Override
-    protected Settings nodeSettings(int nodeOrdinal) {
-        // we create and disable the exporter to avoid the cluster actually using it (thus speeding up tests)
-        // we make an exporter on demand per test
-        return Settings.builder()
-                       .put(super.nodeSettings(nodeOrdinal))
-                       .put("xpack.monitoring.exporters._http.type", "http")
-                       .put("xpack.monitoring.exporters._http.ssl.truststore.password", "foobar") // ensure that ssl can be used by settings
-                       .put("xpack.monitoring.exporters._http.headers.ignored", "value") // ensure that headers can be used by settings
-                       .put("xpack.monitoring.exporters._http.enabled", false)
-                       .build();
-    }
-
     private Settings.Builder baseSettings() {
         return Settings.builder()
-                       .put("xpack.monitoring.exporters._http.type", "http")
-                       .put("xpack.monitoring.exporters._http.host", getFormattedAddress(webServer))
-                       .putList("xpack.monitoring.exporters._http.cluster_alerts.management.blacklist", clusterAlertBlacklist)
-                       .put("xpack.monitoring.exporters._http.index.template.create_legacy_templates", includeOldTemplates);
+            .put("xpack.monitoring.exporters._http.enabled", false)
+            .put("xpack.monitoring.exporters._http.type", "http")
+            .put("xpack.monitoring.exporters._http.ssl.truststore.password", "foobar") // ensure that ssl can be used by settings
+            .put("xpack.monitoring.exporters._http.headers.ignored", "value") // ensure that headers can be used by settings
+            .put("xpack.monitoring.exporters._http.host", getFormattedAddress(webServer))
+            .putList("xpack.monitoring.exporters._http.cluster_alerts.management.blacklist", clusterAlertBlacklist)
+            .put("xpack.monitoring.exporters._http.index.template.create_legacy_templates", includeOldTemplates);
     }
 
     public void testExport() throws Exception {
@@ -608,7 +598,7 @@ public class HttpExporterIT extends MonitoringIntegTestCase {
         assertBusy(() -> assertThat(clusterService().state().version(), not(ClusterState.UNKNOWN_VERSION)));
 
         try (HttpExporter exporter = createHttpExporter(settings)) {
-            final CountDownLatch awaitResponseAndClose = new CountDownLatch(2);
+            final CountDownLatch awaitResponseAndClose = new CountDownLatch(1);
 
             exporter.openBulk(ActionListener.wrap(exportBulk -> {
                 final HttpExportBulk bulk = (HttpExportBulk)exportBulk;
@@ -620,9 +610,8 @@ public class HttpExporterIT extends MonitoringIntegTestCase {
                     e -> fail(e.getMessage())
                 );
 
-                bulk.doAdd(docs);
-                bulk.doFlush(listener);
-                bulk.doClose(listener); // reusing the same listener, which is why we expect countDown x2
+                bulk.add(docs);
+                bulk.flush(listener);
             }, e -> fail("Failed to create HttpExportBulk")));
 
             // block until the bulk responds
@@ -636,7 +625,8 @@ public class HttpExporterIT extends MonitoringIntegTestCase {
         long intervalMillis = randomNonNegativeLong();
         MonitoringDoc.Node sourceNode = MonitoringTestUtils.randomMonitoringNode(random());
 
-        return new IndexRecoveryMonitoringDoc(clusterUUID, timestamp, intervalMillis, sourceNode, new RecoveryResponse());
+        return new IndexRecoveryMonitoringDoc(clusterUUID, timestamp, intervalMillis, sourceNode,
+            new RecoveryResponse(0, 0, 0, null, null));
     }
 
     private List<MonitoringDoc> newRandomMonitoringDocs(int nb) {
@@ -866,7 +856,7 @@ public class HttpExporterIT extends MonitoringIntegTestCase {
 
     private void assertBulkRequest(String requestBody, int numberOfActions) throws Exception {
         BulkRequest bulkRequest = Requests.bulkRequest()
-                .add(new BytesArray(requestBody.getBytes(StandardCharsets.UTF_8)), null, null, XContentType.JSON);
+                .add(new BytesArray(requestBody.getBytes(StandardCharsets.UTF_8)), null, XContentType.JSON);
         assertThat(bulkRequest.numberOfActions(), equalTo(numberOfActions));
         for (DocWriteRequest actionRequest : bulkRequest.requests()) {
             assertThat(actionRequest, instanceOf(IndexRequest.class));

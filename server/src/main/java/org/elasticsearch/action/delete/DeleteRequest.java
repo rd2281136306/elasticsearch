@@ -52,6 +52,8 @@ import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
 public class DeleteRequest extends ReplicatedWriteRequest<DeleteRequest>
         implements DocWriteRequest<DeleteRequest>, CompositeIndicesRequest {
 
+    private static final ShardId NO_SHARD_ID = null;
+
     // Set to null initially so we can know to override in bulk requests that have a default type.
     private String type;
     private String id;
@@ -62,7 +64,19 @@ public class DeleteRequest extends ReplicatedWriteRequest<DeleteRequest>
     private long ifSeqNo = UNASSIGNED_SEQ_NO;
     private long ifPrimaryTerm = UNASSIGNED_PRIMARY_TERM;
 
+    public DeleteRequest(StreamInput in) throws IOException {
+        super(in);
+        type = in.readString();
+        id = in.readString();
+        routing = in.readOptionalString();
+        version = in.readLong();
+        versionType = VersionType.fromValue(in.readByte());
+        ifSeqNo = in.readZLong();
+        ifPrimaryTerm = in.readVLong();
+    }
+
     public DeleteRequest() {
+        super(NO_SHARD_ID);
     }
 
     /**
@@ -70,6 +84,7 @@ public class DeleteRequest extends ReplicatedWriteRequest<DeleteRequest>
      * must be set.
      */
     public DeleteRequest(String index) {
+        super(NO_SHARD_ID);
         this.index = index;
     }
 
@@ -84,6 +99,7 @@ public class DeleteRequest extends ReplicatedWriteRequest<DeleteRequest>
      */
     @Deprecated
     public DeleteRequest(String index, String type, String id) {
+        super(NO_SHARD_ID);
         this.index = index;
         this.type = type;
         this.id = id;
@@ -96,6 +112,7 @@ public class DeleteRequest extends ReplicatedWriteRequest<DeleteRequest>
      * @param id    The id of the document
      */
     public DeleteRequest(String index, String id) {
+        super(NO_SHARD_ID);
         this.index = index;
         this.id = id;
     }
@@ -124,7 +141,7 @@ public class DeleteRequest extends ReplicatedWriteRequest<DeleteRequest>
     @Override
     public String type() {
         if (type == null) {
-            return MapperService.SINGLE_MAPPING_NAME;                    
+            return MapperService.SINGLE_MAPPING_NAME;
         }
         return type;
     }
@@ -140,22 +157,6 @@ public class DeleteRequest extends ReplicatedWriteRequest<DeleteRequest>
         this.type = type;
         return this;
     }
-    
-    /**
-     * Set the default type supplied to a bulk
-     * request if this individual request's type is null
-     * or empty
-     * 
-     * @deprecated Types are in the process of being removed.
-     */
-    @Deprecated
-    @Override
-    public DeleteRequest defaultTypeIfNull(String defaultType) {
-        if (Strings.isNullOrEmpty(type)) {
-            type = defaultType;
-        }
-        return this;
-    }    
 
     /**
      * The id of the document to delete.
@@ -273,22 +274,10 @@ public class DeleteRequest extends ReplicatedWriteRequest<DeleteRequest>
     }
 
     @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        type = in.readString();
-        id = in.readString();
-        routing = in.readOptionalString();
-        version = in.readLong();
-        versionType = VersionType.fromValue(in.readByte());
-        ifSeqNo = in.readZLong();
-        ifPrimaryTerm = in.readVLong();
-    }
-
-    @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
-        // A 7.x request allows null types but if deserialized in a 6.x node will cause nullpointer exceptions. 
-        // So we use the type accessor method here to make the type non-null (will default it to "_doc"). 
+        // A 7.x request allows null types but if deserialized in a 6.x node will cause nullpointer exceptions.
+        // So we use the type accessor method here to make the type non-null (will default it to "_doc").
         out.writeString(type());
         out.writeString(id);
         out.writeOptionalString(routing());
@@ -301,15 +290,5 @@ public class DeleteRequest extends ReplicatedWriteRequest<DeleteRequest>
     @Override
     public String toString() {
         return "delete {[" + index + "][" + type() + "][" + id + "]}";
-    }
-
-    /**
-     * Override this method from ReplicationAction, this is where we are storing our state in the request object (which we really shouldn't
-     * do). Once the transport client goes away we can move away from making this available, but in the meantime this is dangerous to set or
-     * use because the DeleteRequest object will always be wrapped in a bulk request envelope, which is where this *should* be set.
-     */
-    @Override
-    public DeleteRequest setShardId(ShardId shardId) {
-        throw new UnsupportedOperationException("shard id should never be set on DeleteRequest");
     }
 }

@@ -73,13 +73,6 @@ public enum Recyclers {
             }
 
             @Override
-            public Recycler.V<T> obtain(int sizing) {
-                synchronized (lock) {
-                    return super.obtain(sizing);
-                }
-            }
-
-            @Override
             public Recycler.V<T> obtain() {
                 synchronized (lock) {
                     return super.obtain();
@@ -150,13 +143,6 @@ public enum Recyclers {
             @Override
             protected Recycler<T> getDelegate() {
                 return recyclers[slot()];
-            }
-
-            @Override
-            public void close() {
-                for (Recycler<T> recycler : recyclers) {
-                    recycler.close();
-                }
             }
 
         };

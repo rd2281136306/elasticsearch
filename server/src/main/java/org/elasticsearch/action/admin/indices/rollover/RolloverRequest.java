@@ -82,7 +82,7 @@ public class RolloverRequest extends AcknowledgedRequest<RolloverRequest> implem
                     throw new IllegalArgumentException("The mapping definition cannot be nested under a type " +
                         "[" + MapperService.SINGLE_MAPPING_NAME + "] unless include_type_name is set to true.");
                 }
-                request.createIndexRequest.mapping(MapperService.SINGLE_MAPPING_NAME, parser.map());
+                request.createIndexRequest.mapping(MapperService.SINGLE_MAPPING_NAME, mappings);
             }
         }, CreateIndexRequest.MAPPINGS, ObjectParser.ValueType.OBJECT);
         PARSER.declareField((parser, request, context) -> request.createIndexRequest.aliases(parser.map()),
@@ -95,6 +95,19 @@ public class RolloverRequest extends AcknowledgedRequest<RolloverRequest> implem
     private Map<String, Condition<?>> conditions = new HashMap<>(2);
     //the index name "_na_" is never read back, what matters are settings, mappings and aliases
     private CreateIndexRequest createIndexRequest = new CreateIndexRequest("_na_");
+
+    public RolloverRequest(StreamInput in) throws IOException {
+        super(in);
+        alias = in.readString();
+        newIndexName = in.readOptionalString();
+        dryRun = in.readBoolean();
+        int size = in.readVInt();
+        for (int i = 0; i < size; i++) {
+            Condition<?> condition = in.readNamedWriteable(Condition.class);
+            this.conditions.put(condition.name, condition);
+        }
+        createIndexRequest = new CreateIndexRequest(in);
+    }
 
     RolloverRequest() {}
 
@@ -113,21 +126,6 @@ public class RolloverRequest extends AcknowledgedRequest<RolloverRequest> implem
     }
 
     @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        alias = in.readString();
-        newIndexName = in.readOptionalString();
-        dryRun = in.readBoolean();
-        int size = in.readVInt();
-        for (int i = 0; i < size; i++) {
-            Condition<?> condition = in.readNamedWriteable(Condition.class);
-            this.conditions.put(condition.name, condition);
-        }
-        createIndexRequest = new CreateIndexRequest();
-        createIndexRequest.readFrom(in);
-    }
-
-    @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         out.writeString(alias);
@@ -135,9 +133,7 @@ public class RolloverRequest extends AcknowledgedRequest<RolloverRequest> implem
         out.writeBoolean(dryRun);
         out.writeVInt(conditions.size());
         for (Condition<?> condition : conditions.values()) {
-            if (condition.includedInVersion(out.getVersion())) {
-                out.writeNamedWriteable(condition);
-            }
+            out.writeNamedWriteable(condition);
         }
         createIndexRequest.writeTo(out);
     }

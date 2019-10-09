@@ -35,6 +35,7 @@ import org.elasticsearch.test.ESIntegTestCase;
 import static org.elasticsearch.index.query.QueryBuilders.geoShapeQuery;
 import static org.elasticsearch.index.query.QueryBuilders.matchAllQuery;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.instanceOf;
 
@@ -123,6 +124,27 @@ public class GeoShapeIntegrationIT extends ESIntegTestCase {
         assertThat(searchResponse.getHits().getTotalHits().value, equalTo(1L));
     }
 
+    public void testMappingUpdate() throws Exception {
+        // create index
+        assertAcked(client().admin().indices().prepareCreate("test")
+            .addMapping("geometry", "shape", "type=geo_shape").get());
+        ensureGreen();
+
+        String update ="{\n" +
+            "  \"properties\": {\n" +
+            "    \"shape\": {\n" +
+            "      \"type\": \"geo_shape\",\n" +
+            "      \"strategy\": \"recursive\"\n" +
+            "    }\n" +
+            "  }\n" +
+            "}";
+
+        IllegalArgumentException e = expectThrows(IllegalArgumentException.class, () -> client().admin().indices()
+            .preparePutMapping("test").setType("geometry")
+            .setSource(update, XContentType.JSON).get());
+        assertThat(e.getMessage(), containsString("using [BKD] strategy cannot be merged with"));
+    }
+
     /**
      * Test that the indexed shape routing can be provided if it is required
      */
@@ -153,7 +175,7 @@ public class GeoShapeIntegrationIT extends ESIntegTestCase {
         indexRandom(true, client().prepareIndex("test", "doc", "0").setSource(source, XContentType.JSON).setRouting("ABC"));
 
         SearchResponse searchResponse = client().prepareSearch("test").setQuery(
-            geoShapeQuery("shape", "0", "doc").indexedShapeIndex("test").indexedShapeRouting("ABC")
+            geoShapeQuery("shape", "0").indexedShapeIndex("test").indexedShapeRouting("ABC")
         ).get();
 
         assertThat(searchResponse.getHits().getTotalHits().value, equalTo(1L));

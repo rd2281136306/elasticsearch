@@ -1,11 +1,16 @@
+[role="xpack"]
+[testenv="basic"]
 [[sparse-vector]]
 === Sparse vector datatype
+++++
+<titleabbrev>Sparse vector</titleabbrev>
+++++
 
 experimental[]
 
 A `sparse_vector` field stores sparse vectors of float values.
 The maximum number of dimensions that can be in a vector should
-not exceed 500. The number of dimensions can be
+not exceed 1024. The number of dimensions can be
 different across documents. A `sparse_vector` field is
 a single-valued field.
 
@@ -18,7 +23,7 @@ are dimensions, and fields values are values for these dimensions.
 Dimensions are integer values from `0` to `65535` encoded as strings.
 Dimensions don't need to be in order.
 
-[source,js]
+[source,console]
 --------------------------------------------------
 PUT my_index
 {
@@ -47,9 +52,8 @@ PUT my_index/_doc/2
 }
 
 --------------------------------------------------
-// CONSOLE
 
 Internally, each document's sparse vector is encoded as a binary
 doc value. Its size in bytes is equal to
-`6 * NUMBER_OF_DIMENSIONS`, where `NUMBER_OF_DIMENSIONS` -
+`6 * NUMBER_OF_DIMENSIONS + 4`, where `NUMBER_OF_DIMENSIONS` -
 number of the vector's dimensions.

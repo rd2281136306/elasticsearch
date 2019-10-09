@@ -71,32 +71,25 @@ password: `elastic-password`.
 ==== Other useful arguments
 
 In order to start a node with a different max heap space add: `-Dtests.heap.size=4G`
-In order to disable annotations add: `-Dtests.asserts=false`
+In order to disable assertions add: `-Dtests.asserts=false`
 In order to set an Elasticsearch setting, provide a setting with the following prefix: `-Dtests.es.`
 
 === Test case filtering.
 
-- `tests.class` is a class-filtering shell-like glob pattern,
-- `tests.method` is a method-filtering glob pattern.
+You can run a single test, provided that you specify the Gradle project.  See the documentation on
+https://docs.gradle.org/current/userguide/userguide_single.html#simple_name_pattern[simple name pattern filtering].
 
-Run a single test case (variants)
+Run a single test case in the `server` project:
 
 ----------------------------------------------------------
-./gradlew test -Dtests.class=org.elasticsearch.package.ClassName
-./gradlew test "-Dtests.class=*.ClassName"
+./gradlew :server:test --tests org.elasticsearch.package.ClassName
 ----------------------------------------------------------
 
-Run all tests in a package and its sub-packages
+Run all tests in a package and its sub-packages:
 
 ----------------------------------------------------
-./gradlew test "-Dtests.class=org.elasticsearch.package.*"
+./gradlew :server:test --tests 'org.elasticsearch.package.*'
 ----------------------------------------------------
-
-Run any test methods that contain 'esi' (like: ...r*esi*ze...)
-
--------------------------------
-./gradlew test "-Dtests.method=*esi*"
--------------------------------
 
 Run all tests that are waiting for a bugfix (disabled by default)
 
@@ -118,7 +111,7 @@ Every test repetition will have a different method seed
 (derived from a single random master seed).
 
 --------------------------------------------------
-./gradlew test -Dtests.iters=N -Dtests.class=*.ClassName
+./gradlew :server:test -Dtests.iters=N --tests org.elasticsearch.package.ClassName
 --------------------------------------------------
 
 === Repeats _all_ tests of ClassName N times.
@@ -127,7 +120,7 @@ Every test repetition will have exactly the same master (0xdead) and
 method-level (0xbeef) seed.
 
 ------------------------------------------------------------------------
-./gradlew test -Dtests.iters=N -Dtests.class=*.ClassName -Dtests.seed=DEAD:BEEF
+./gradlew :server:test -Dtests.iters=N -Dtests.seed=DEAD:BEEF --tests org.elasticsearch.package.ClassName
 ------------------------------------------------------------------------
 
 === Repeats a given test N times
@@ -137,14 +130,14 @@ ie: testFoo[0], testFoo[1], etc... so using testmethod or tests.method
 ending in a glob is necessary to ensure iterations are run).
 
 -------------------------------------------------------------------------
-./gradlew test -Dtests.iters=N -Dtests.class=*.ClassName -Dtests.method=mytest*
+./gradlew :server:test -Dtests.iters=N --tests org.elasticsearch.package.ClassName.methodName
 -------------------------------------------------------------------------
 
 Repeats N times but skips any tests after the first failure or M initial failures.
 
 -------------------------------------------------------------
-./gradlew test -Dtests.iters=N -Dtests.failfast=true -Dtestcase=...
-./gradlew test -Dtests.iters=N -Dtests.maxfailures=M -Dtestcase=...
+./gradlew test -Dtests.iters=N -Dtests.failfast=true ...
+./gradlew test -Dtests.iters=N -Dtests.maxfailures=M ...
 -------------------------------------------------------------
 
 === Test groups.
@@ -175,7 +168,7 @@ systemProp.tests.jvms=8
 ----------------------------
 
 Its difficult to pick the "right" number here. Hypercores don't count for CPU
-intensive tests and you should leave some slack for JVM-interal threads like
+intensive tests and you should leave some slack for JVM-internal threads like
 the garbage collector. And you have to have enough RAM to handle each JVM.
 
 === Test compatibility.
@@ -305,12 +298,6 @@ e.g. -Dtests.rest.suite=index,get,create/10_with_id
 blacklisted and need to be skipped
 e.g. -Dtests.rest.blacklist=index/*/Index document,get/10_basic/*
 
-Note that the REST tests, like all the integration tests, can be run against an external
-cluster by specifying the `tests.cluster` property, which if present needs to contain a
-comma separated list of nodes to connect to (e.g. localhost:9300). A transport client will
-be created based on that and used for all the before|after test operations, and to extract
-the http addresses of the nodes so that REST requests can be sent to them.
-
 == Testing packaging
 
 The packaging tests use Vagrant virtual machines to verify that installing
@@ -340,13 +327,13 @@ be downloaded again unless they have been updated to a new version.
 +
 . Run the tests with `./gradlew packagingTest`. This will cause Gradle to build
 the tar, zip, and deb packages and all the plugins. It will then run the tests
-on ubuntu-1404 and centos-7. We chose those two distributions as the default
+on ubuntu-1604 and centos-7. We chose those two distributions as the default
 because they cover deb and rpm packaging and SyvVinit and systemd.
 
 You can choose which boxes to test by setting the `-Pvagrant.boxes` project property. All of
 the valid options for this property are:
 
-* `sample` - The default, only chooses ubuntu-1404 and centos-7
+* `sample` - The default, only chooses ubuntu-1604 and centos-7
 * List of box names, comma separated (e.g. `oel-7,fedora-28`) - Chooses exactly the boxes listed.
 * `linux-all` - All linux boxes.
 * `windows-all` - All Windows boxes. If there are any Windows boxes which do not
@@ -364,17 +351,17 @@ will remain running and you'll have to stop them manually with `./gradlew stop` 
 
 All the regular vagrant commands should just work so you can get a shell in a
 VM running trusty by running
-`vagrant up ubuntu-1404 --provider virtualbox && vagrant ssh ubuntu-1404`.
+`vagrant up ubuntu-1604 --provider virtualbox && vagrant ssh ubuntu-1604`.
 
 These are the linux flavors supported, all of which we provide images for
 
-* ubuntu-1404 aka trusty
 * ubuntu-1604 aka xenial
 * ubuntu-1804 aka bionic beaver
 * debian-8 aka jessie
 * debian-9 aka stretch, the current debian stable distribution
 * centos-6
 * centos-7
+* rhel-8
 * fedora-28
 * fedora-29
 * oel-6 aka Oracle Enterprise Linux 6
@@ -422,13 +409,13 @@ It's important to think of VMs like cattle. If they become lame you just shoot
 them and let vagrant reprovision them. Say you've hosed your precise VM:
 
 ----------------------------------------------------
-vagrant ssh ubuntu-1404 -c 'sudo rm -rf /bin'; echo oops
+vagrant ssh ubuntu-1604 -c 'sudo rm -rf /bin'; echo oops
 ----------------------------------------------------
 
 All you've got to do to get another one is
 
 ----------------------------------------------
-vagrant destroy -f ubuntu-1404 && vagrant up ubuntu-1404 --provider virtualbox
+vagrant destroy -f ubuntu-1604 && vagrant up ubuntu-1604 --provider virtualbox
 ----------------------------------------------
 
 The whole process takes a minute and a half on a modern laptop, two and a half
@@ -498,8 +485,8 @@ sudo bash $PACKAGING_TESTS/run-tests.sh
 
 # run specific test cases
 sudo bash $PACKAGING_TESTS/run-tests.sh \
-  org.elasticsearch.packaging.test.DefaultZipTests \
-  org.elasticsearch.packaging.test.OssZipTests
+  org.elasticsearch.packaging.test.DefaultWindowsZipTests \
+  org.elasticsearch.packaging.test.OssWindowsZipTests
 --------------------------------------------
 
 or on Windows, from a terminal running as Administrator
@@ -510,8 +497,8 @@ powershell -File $Env:PACKAGING_TESTS/run-tests.ps1
 
 # run specific test cases
 powershell -File $Env:PACKAGING_TESTS/run-tests.ps1 `
-  org.elasticsearch.packaging.test.DefaultZipTests `
-  org.elasticsearch.packaging.test.OssZipTests
+  org.elasticsearch.packaging.test.DefaultWindowsZipTests `
+  org.elasticsearch.packaging.test.OssWindowsZipTests
 --------------------------------------------
 
 Note that on Windows boxes when running from inside the GUI, you may have to log out and
@@ -559,10 +546,10 @@ When running `./gradlew check`, minimal bwc checks are also run against compatib
 Sometimes a backward compatibility change spans two versions. A common case is a new functionality
 that needs a BWC bridge in an unreleased versioned of a release branch (for example, 5.x).
 To test the changes, you can instruct Gradle to build the BWC version from a another remote/branch combination instead of
-pulling the release branch from GitHub. You do so using the `tests.bwc.remote` and `tests.bwc.refspec.BRANCH` system properties:
+pulling the release branch from GitHub. You do so using the `bwc.remote` and `bwc.refspec.BRANCH` system properties:
 
 -------------------------------------------------
-./gradlew check -Dtests.bwc.remote=${remote} -Dtests.bwc.refspec.5.x=index_req_bwc_5.x
+./gradlew check -Dbwc.remote=${remote} -Dbwc.refspec.5.x=index_req_bwc_5.x
 -------------------------------------------------
 
 The branch needs to be available on the remote that the BWC makes of the
@@ -577,7 +564,7 @@ will need to:
 will contain your change.
 . Create a branch called `index_req_bwc_5.x` off `5.x`. This will contain your bwc layer.
 . Push both branches to your remote repository.
-. Run the tests with `./gradlew check -Dtests.bwc.remote=${remote} -Dtests.bwc.refspec.5.x=index_req_bwc_5.x`.
+. Run the tests with `./gradlew check -Dbwc.remote=${remote} -Dbwc.refspec.5.x=index_req_bwc_5.x`.
 
 ==== Skip fetching latest
 

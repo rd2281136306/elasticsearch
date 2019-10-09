@@ -38,7 +38,6 @@ import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.store.BufferedChecksum;
 import org.apache.lucene.store.ByteArrayDataInput;
-import org.apache.lucene.store.ByteBufferIndexInput;
 import org.apache.lucene.store.ChecksumIndexInput;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FilterDirectory;
@@ -46,7 +45,6 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.store.Lock;
-import org.apache.lucene.store.RandomAccessInput;
 import org.apache.lucene.store.SimpleFSDirectory;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BytesRef;
@@ -98,7 +96,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -137,7 +135,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * this by exploiting lucene internals and wrapping the IndexInput in a simple delegate.
      */
     public static final Setting<Boolean> FORCE_RAM_TERM_DICT = Setting.boolSetting("index.force_memory_term_dictionary", false,
-        Property.IndexScope);
+        Property.IndexScope, Property.Deprecated);
     static final String CODEC = "store";
     static final int VERSION_WRITE_THROWABLE= 2; // we write throwable since 2.0
     static final int VERSION_STACK_TRACE = 1; // we write the stack trace too since 1.4.0
@@ -172,8 +170,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         final TimeValue refreshInterval = indexSettings.getValue(INDEX_STORE_STATS_REFRESH_INTERVAL_SETTING);
         logger.debug("store stats are refreshed with refresh_interval [{}]", refreshInterval);
         ByteSizeCachingDirectory sizeCachingDir = new ByteSizeCachingDirectory(directory, refreshInterval);
-        this.directory = new StoreDirectory(sizeCachingDir, Loggers.getLogger("index.store.deletes", shardId),
-            indexSettings.getValue(FORCE_RAM_TERM_DICT));
+        this.directory = new StoreDirectory(sizeCachingDir, Loggers.getLogger("index.store.deletes", shardId));
         this.shardLock = shardLock;
         this.onClose = onClose;
 
@@ -712,12 +709,10 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     static final class StoreDirectory extends FilterDirectory {
 
         private final Logger deletesLogger;
-        private final boolean forceRamTermDict;
 
-        StoreDirectory(ByteSizeCachingDirectory delegateDirectory, Logger deletesLogger, boolean forceRamTermDict) {
+        StoreDirectory(ByteSizeCachingDirectory delegateDirectory, Logger deletesLogger) {
             super(delegateDirectory);
             this.deletesLogger = deletesLogger;
-            this.forceRamTermDict = forceRamTermDict;
         }
 
         /** Estimate the cumulative size of all files in this directory in bytes. */
@@ -742,18 +737,6 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
 
         private void innerClose() throws IOException {
             super.close();
-        }
-
-        @Override
-        public IndexInput openInput(String name, IOContext context) throws IOException {
-            IndexInput input = super.openInput(name, context);
-            if (name.endsWith(".tip") || name.endsWith(".cfs")) {
-                // only do this if we are reading cfs or tip file - all other files don't need this.
-                if (forceRamTermDict && input instanceof ByteBufferIndexInput) {
-                    return new DeoptimizingIndexInput(input.toString(), input);
-                }
-            }
-            return input;
         }
 
         @Override
@@ -1501,22 +1484,6 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         }
     }
 
-
-    /**
-     * Checks that the Lucene index contains a history uuid marker. If not, a new one is generated and committed.
-     */
-    public void ensureIndexHasHistoryUUID() throws IOException {
-        metadataLock.writeLock().lock();
-        try (IndexWriter writer = newAppendingIndexWriter(directory, null)) {
-            final Map<String, String> userData = getUserData(writer);
-            if (userData.containsKey(Engine.HISTORY_UUID_KEY) == false) {
-                updateCommitData(writer, Collections.singletonMap(Engine.HISTORY_UUID_KEY, UUIDs.randomBase64UUID()));
-            }
-        } finally {
-            metadataLock.writeLock().unlock();
-        }
-    }
-
     /**
      * Keeping existing unsafe commits when opening an engine can be problematic because these commits are not safe
      * at the recovering time but they can suddenly become safe in the future.
@@ -1534,46 +1501,17 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * commit on the replica will cause exception as the new last commit c3 will have recovery_translog_gen=1. The recovery
      * translog generation of a commit is calculated based on the current local checkpoint. The local checkpoint of c3 is 1
      * while the local checkpoint of c2 is 2.
-     * <p>
-     * 3. Commit without translog can be used in recovery. An old index, which was created before multiple-commits is introduced
-     * (v6.2), may not have a safe commit. If that index has a snapshotted commit without translog and an unsafe commit,
-     * the policy can consider the snapshotted commit as a safe commit for recovery even the commit does not have translog.
      */
-    public void trimUnsafeCommits(final long lastSyncedGlobalCheckpoint, final long minRetainedTranslogGen,
-                                  final org.elasticsearch.Version indexVersionCreated) throws IOException {
+    public void trimUnsafeCommits(final Path translogPath) throws IOException {
         metadataLock.writeLock().lock();
         try {
             final List<IndexCommit> existingCommits = DirectoryReader.listCommits(directory);
-            if (existingCommits.isEmpty()) {
-                throw new IllegalArgumentException("No index found to trim");
-            }
-            final IndexCommit lastIndexCommitCommit = existingCommits.get(existingCommits.size() - 1);
-            final String translogUUID = lastIndexCommitCommit.getUserData().get(Translog.TRANSLOG_UUID_KEY);
-            final IndexCommit startingIndexCommit;
-            // We may not have a safe commit if an index was create before v6.2; and if there is a snapshotted commit whose translog
-            // are not retained but max_seqno is at most the global checkpoint, we may mistakenly select it as a starting commit.
-            // To avoid this issue, we only select index commits whose translog are fully retained.
-            if (indexVersionCreated.before(org.elasticsearch.Version.V_6_2_0)) {
-                final List<IndexCommit> recoverableCommits = new ArrayList<>();
-                for (IndexCommit commit : existingCommits) {
-                    if (minRetainedTranslogGen <= Long.parseLong(commit.getUserData().get(Translog.TRANSLOG_GENERATION_KEY))) {
-                        recoverableCommits.add(commit);
-                    }
-                }
-                assert recoverableCommits.isEmpty() == false : "No commit point with translog found; " +
-                    "commits [" + existingCommits + "], minRetainedTranslogGen [" + minRetainedTranslogGen + "]";
-                startingIndexCommit = CombinedDeletionPolicy.findSafeCommitPoint(recoverableCommits, lastSyncedGlobalCheckpoint);
-            } else {
-                // TODO: Asserts the starting commit is a safe commit once peer-recovery sets global checkpoint.
-                startingIndexCommit = CombinedDeletionPolicy.findSafeCommitPoint(existingCommits, lastSyncedGlobalCheckpoint);
-            }
-
-            if (translogUUID.equals(startingIndexCommit.getUserData().get(Translog.TRANSLOG_UUID_KEY)) == false) {
-                throw new IllegalStateException("starting commit translog uuid ["
-                    + startingIndexCommit.getUserData().get(Translog.TRANSLOG_UUID_KEY) + "] is not equal to last commit's translog uuid ["
-                    + translogUUID + "]");
-            }
-            if (startingIndexCommit.equals(lastIndexCommitCommit) == false) {
+            assert existingCommits.isEmpty() == false;
+            final IndexCommit lastIndexCommit = existingCommits.get(existingCommits.size() - 1);
+            final String translogUUID = lastIndexCommit.getUserData().get(Translog.TRANSLOG_UUID_KEY);
+            final long lastSyncedGlobalCheckpoint = Translog.readGlobalCheckpoint(translogPath, translogUUID);
+            final IndexCommit startingIndexCommit = CombinedDeletionPolicy.findSafeCommitPoint(existingCommits, lastSyncedGlobalCheckpoint);
+            if (startingIndexCommit.equals(lastIndexCommit) == false) {
                 try (IndexWriter writer = newAppendingIndexWriter(directory, startingIndexCommit)) {
                     // this achieves two things:
                     // - by committing a new commit based on the starting commit, it make sure the starting commit will be opened
@@ -1590,6 +1528,22 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             }
         } finally {
             metadataLock.writeLock().unlock();
+        }
+    }
+
+    /**
+     * Returns a {@link org.elasticsearch.index.seqno.SequenceNumbers.CommitInfo} of the safe commit if exists.
+     */
+    public Optional<SequenceNumbers.CommitInfo> findSafeIndexCommit(long globalCheckpoint) throws IOException {
+        final List<IndexCommit> commits = DirectoryReader.listCommits(directory);
+        assert commits.isEmpty() == false : "no commit found";
+        final IndexCommit safeCommit = CombinedDeletionPolicy.findSafeCommitPoint(commits, globalCheckpoint);
+        final SequenceNumbers.CommitInfo commitInfo = SequenceNumbers.loadSeqNoInfoFromLuceneCommit(safeCommit.getUserData().entrySet());
+        // all operations of the safe commit must be at most the global checkpoint.
+        if (commitInfo.maxSeqNo <= globalCheckpoint) {
+            return Optional.of(commitInfo);
+        } else {
+            return Optional.empty();
         }
     }
 
@@ -1628,128 +1582,5 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                 // later once we stared it up otherwise we would need to wait for it here
                 // we also don't specify a codec here and merges should use the engines for this index
                 .setMergePolicy(NoMergePolicy.INSTANCE);
-    }
-
-    /**
-     * see {@link #FORCE_RAM_TERM_DICT} for details
-     */
-    private static final class DeoptimizingIndexInput extends IndexInput {
-
-        private final IndexInput in;
-
-        private DeoptimizingIndexInput(String resourceDescription, IndexInput in) {
-            super(resourceDescription);
-            this.in = in;
-        }
-
-        @Override
-        public IndexInput clone() {
-            return new DeoptimizingIndexInput(toString(), in.clone());
-        }
-
-        @Override
-        public void close() throws IOException {
-            in.close();
-        }
-
-        @Override
-        public long getFilePointer() {
-            return in.getFilePointer();
-        }
-
-        @Override
-        public void seek(long pos) throws IOException {
-            in.seek(pos);
-        }
-
-        @Override
-        public long length() {
-            return in.length();
-        }
-
-        @Override
-        public String toString() {
-            return in.toString();
-        }
-
-        @Override
-        public IndexInput slice(String sliceDescription, long offset, long length) throws IOException {
-            return new DeoptimizingIndexInput(sliceDescription, in.slice(sliceDescription, offset, length));
-        }
-
-        @Override
-        public RandomAccessInput randomAccessSlice(long offset, long length) throws IOException {
-            return in.randomAccessSlice(offset, length);
-        }
-
-        @Override
-        public byte readByte() throws IOException {
-            return in.readByte();
-        }
-
-        @Override
-        public void readBytes(byte[] b, int offset, int len) throws IOException {
-            in.readBytes(b, offset, len);
-        }
-
-        @Override
-        public void readBytes(byte[] b, int offset, int len, boolean useBuffer) throws IOException {
-            in.readBytes(b, offset, len, useBuffer);
-        }
-
-        @Override
-        public short readShort() throws IOException {
-            return in.readShort();
-        }
-
-        @Override
-        public int readInt() throws IOException {
-            return in.readInt();
-        }
-
-        @Override
-        public int readVInt() throws IOException {
-            return in.readVInt();
-        }
-
-        @Override
-        public int readZInt() throws IOException {
-            return in.readZInt();
-        }
-
-        @Override
-        public long readLong() throws IOException {
-            return in.readLong();
-        }
-
-        @Override
-        public long readVLong() throws IOException {
-            return in.readVLong();
-        }
-
-        @Override
-        public long readZLong() throws IOException {
-            return in.readZLong();
-        }
-
-        @Override
-        public String readString() throws IOException {
-            return in.readString();
-        }
-
-        @Override
-        public Map<String, String> readMapOfStrings() throws IOException {
-            return in.readMapOfStrings();
-        }
-
-        @Override
-        public Set<String> readSetOfStrings() throws IOException {
-            return in.readSetOfStrings();
-        }
-
-        @Override
-        public void skipBytes(long numBytes) throws IOException {
-            in.skipBytes(numBytes);
-        }
     }
 }

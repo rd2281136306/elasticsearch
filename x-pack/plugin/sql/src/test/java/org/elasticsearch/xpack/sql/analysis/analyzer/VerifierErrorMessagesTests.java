@@ -203,10 +203,116 @@ public class VerifierErrorMessagesTests extends ESTestCase {
         assertEquals("1:8: Invalid datetime field [ABS]. Use any datetime function.", error("SELECT EXTRACT(ABS FROM date) FROM test"));
     }
 
+    public void testDateTruncInvalidArgs() {
+        assertEquals("1:8: first argument of [DATE_TRUNC(int, date)] must be [string], found value [int] type [integer]",
+            error("SELECT DATE_TRUNC(int, date) FROM test"));
+        assertEquals("1:8: second argument of [DATE_TRUNC(keyword, keyword)] must be [date or datetime], found value [keyword] " +
+                "type [keyword]", error("SELECT DATE_TRUNC(keyword, keyword) FROM test"));
+        assertEquals("1:8: first argument of [DATE_TRUNC('invalid', keyword)] must be one of [MILLENNIUM, CENTURY, DECADE, " + "" +
+                "YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, SECOND, MILLISECOND, MICROSECOND, NANOSECOND] " +
+                "or their aliases, found value ['invalid']",
+            error("SELECT DATE_TRUNC('invalid', keyword) FROM test"));
+        assertEquals("1:8: Unknown value ['millenioum'] for first argument of [DATE_TRUNC('millenioum', keyword)]; " +
+                "did you mean [millennium, millennia]?",
+            error("SELECT DATE_TRUNC('millenioum', keyword) FROM test"));
+        assertEquals("1:8: Unknown value ['yyyz'] for first argument of [DATE_TRUNC('yyyz', keyword)]; " +
+                "did you mean [yyyy, yy]?",
+            error("SELECT DATE_TRUNC('yyyz', keyword) FROM test"));
+    }
+
+    public void testDateTruncValidArgs() {
+        accept("SELECT DATE_TRUNC('decade', date) FROM test");
+        accept("SELECT DATE_TRUNC('decades', date) FROM test");
+        accept("SELECT DATE_TRUNC('day', date) FROM test");
+        accept("SELECT DATE_TRUNC('days', date) FROM test");
+        accept("SELECT DATE_TRUNC('dd', date) FROM test");
+        accept("SELECT DATE_TRUNC('d', date) FROM test");
+
+    }
+
+    public void testDatePartInvalidArgs() {
+        assertEquals("1:8: first argument of [DATE_PART(int, date)] must be [string], found value [int] type [integer]",
+            error("SELECT DATE_PART(int, date) FROM test"));
+        assertEquals("1:8: second argument of [DATE_PART(keyword, keyword)] must be [date or datetime], found value [keyword] " +
+            "type [keyword]", error("SELECT DATE_PART(keyword, keyword) FROM test"));
+        assertEquals("1:8: first argument of [DATE_PART('invalid', keyword)] must be one of [YEAR, QUARTER, MONTH, DAYOFYEAR, " +
+            "DAY, WEEK, WEEKDAY, HOUR, MINUTE, SECOND, MILLISECOND, MICROSECOND, NANOSECOND, TZOFFSET] " +
+                "or their aliases, found value ['invalid']",
+            error("SELECT DATE_PART('invalid', keyword) FROM test"));
+        assertEquals("1:8: Unknown value ['tzofset'] for first argument of [DATE_PART('tzofset', keyword)]; " +
+                "did you mean [tzoffset]?",
+            error("SELECT DATE_PART('tzofset', keyword) FROM test"));
+        assertEquals("1:8: Unknown value ['dz'] for first argument of [DATE_PART('dz', keyword)]; " +
+                "did you mean [dd, tz, dw, dy, d]?",
+            error("SELECT DATE_PART('dz', keyword) FROM test"));
+    }
+
+    public void testDatePartValidArgs() {
+        accept("SELECT DATE_PART('weekday', date) FROM test");
+        accept("SELECT DATE_PART('dw', date) FROM test");
+        accept("SELECT DATE_PART('tz', date) FROM test");
+        accept("SELECT DATE_PART('dayofyear', date) FROM test");
+        accept("SELECT DATE_PART('dy', date) FROM test");
+        accept("SELECT DATE_PART('ms', date) FROM test");
+    }
+
+    public void testValidDateTimeFunctionsOnTime() {
+        accept("SELECT HOUR_OF_DAY(CAST(date AS TIME)) FROM test");
+        accept("SELECT MINUTE_OF_HOUR(CAST(date AS TIME)) FROM test");
+        accept("SELECT MINUTE_OF_DAY(CAST(date AS TIME)) FROM test");
+        accept("SELECT SECOND_OF_MINUTE(CAST(date AS TIME)) FROM test");
+    }
+
+    public void testInvalidDateTimeFunctionsOnTime() {
+        assertEquals("1:8: argument of [DAY_OF_YEAR(CAST(date AS TIME))] must be [date or datetime], " +
+                "found value [CAST(date AS TIME)] type [time]",
+            error("SELECT DAY_OF_YEAR(CAST(date AS TIME)) FROM test"));
+    }
+
+    public void testGroupByOnTimeNotAllowed() {
+        assertEquals("1:36: Function [CAST(date AS TIME)] with data type [time] cannot be used for grouping",
+            error("SELECT count(*) FROM test GROUP BY CAST(date AS TIME)"));
+    }
+
+    public void testGroupByOnTimeWrappedWithScalar() {
+        accept("SELECT count(*) FROM test GROUP BY MINUTE(CAST(date AS TIME))");
+    }
+
+    public void testHistogramOnTimeNotAllowed() {
+        assertEquals("1:8: first argument of [HISTOGRAM] must be [date, datetime or numeric], " +
+                "found value [CAST(date AS TIME)] type [time]",
+            error("SELECT HISTOGRAM(CAST(date AS TIME), INTERVAL 1 MONTH), COUNT(*) FROM test GROUP BY 1"));
+    }
+
     public void testSubtractFromInterval() {
         assertEquals("1:8: Cannot subtract a datetime[CAST('2000-01-01' AS DATETIME)] " +
                 "from an interval[INTERVAL 1 MONTH]; do you mean the reverse?",
             error("SELECT INTERVAL 1 MONTH - CAST('2000-01-01' AS DATETIME)"));
+
+        assertEquals("1:8: Cannot subtract a time[CAST('12:23:56.789' AS TIME)] " +
+                "from an interval[INTERVAL 1 MONTH]; do you mean the reverse?",
+            error("SELECT INTERVAL 1 MONTH - CAST('12:23:56.789' AS TIME)"));
+    }
+
+    public void testAddIntervalAndNumberNotAllowed() {
+        assertEquals("1:8: [+] has arguments with incompatible types [INTERVAL_DAY] and [INTEGER]",
+            error("SELECT INTERVAL 1 DAY + 100"));
+        assertEquals("1:8: [+] has arguments with incompatible types [INTEGER] and [INTERVAL_DAY]",
+            error("SELECT 100 + INTERVAL 1 DAY"));
+    }
+
+    public void testSubtractIntervalAndNumberNotAllowed() {
+        assertEquals("1:8: [-] has arguments with incompatible types [INTERVAL_MINUTE] and [DOUBLE]",
+            error("SELECT INTERVAL 10 MINUTE - 100.0"));
+        assertEquals("1:8: [-] has arguments with incompatible types [DOUBLE] and [INTERVAL_MINUTE]",
+            error("SELECT 100.0 - INTERVAL 10 MINUTE"));
+    }
+
+    public void testMultiplyIntervalWithDecimalNotAllowed() {
+        assertEquals("1:8: [*] has arguments with incompatible types [INTERVAL_MONTH] and [DOUBLE]",
+            error("SELECT INTERVAL 1 MONTH * 1.234"));
+        assertEquals("1:8: [*] has arguments with incompatible types [DOUBLE] and [INTERVAL_MONTH]",
+            error("SELECT 1.234 * INTERVAL 1 MONTH"));
     }
 
     public void testMultipleColumns() {
@@ -293,7 +399,7 @@ public class VerifierErrorMessagesTests extends ESTestCase {
     }
 
     public void testGroupByOnInexact() {
-        assertEquals("1:36: Field of data type [text] cannot be used for grouping; " +
+        assertEquals("1:36: Field [text] of data type [text] cannot be used for grouping; " +
                 "No keyword/multi-field defined exact matches for [text]; define one or use MATCH/QUERY instead",
             error("SELECT COUNT(*) FROM test GROUP BY text"));
     }
@@ -388,44 +494,14 @@ public class VerifierErrorMessagesTests extends ESTestCase {
                 error("SELECT int FROM test GROUP BY int HAVING 2 < ABS(int)"));
     }
 
-    public void testInWithDifferentDataTypes_SelectClause() {
-        assertEquals("1:17: expected data type [integer], value provided is of type [keyword]",
+    public void testInWithDifferentDataTypes() {
+        assertEquals("1:8: 2nd argument of [1 IN (2, '3', 4)] must be [integer], found value ['3'] type [keyword]",
             error("SELECT 1 IN (2, '3', 4)"));
     }
 
-    public void testInNestedWithDifferentDataTypes_SelectClause() {
-        assertEquals("1:27: expected data type [integer], value provided is of type [keyword]",
-            error("SELECT 1 = 1  OR 1 IN (2, '3', 4)"));
-    }
-
-    public void testInWithDifferentDataTypesFromLeftValue_SelectClause() {
-        assertEquals("1:14: expected data type [integer], value provided is of type [keyword]",
+    public void testInWithDifferentDataTypesFromLeftValue() {
+        assertEquals("1:8: 1st argument of [1 IN ('foo', 'bar')] must be [integer], found value ['foo'] type [keyword]",
             error("SELECT 1 IN ('foo', 'bar')"));
-    }
-
-    public void testInNestedWithDifferentDataTypesFromLeftValue_SelectClause() {
-        assertEquals("1:29: expected data type [keyword], value provided is of type [integer]",
-            error("SELECT 1 = 1  OR  'foo' IN (2, 3)"));
-    }
-
-    public void testInWithDifferentDataTypes_WhereClause() {
-        assertEquals("1:52: expected data type [keyword], value provided is of type [integer]",
-            error("SELECT * FROM test WHERE keyword IN ('foo', 'bar', 4)"));
-    }
-
-    public void testInNestedWithDifferentDataTypes_WhereClause() {
-        assertEquals("1:63: expected data type [keyword], value provided is of type [integer]",
-            error("SELECT * FROM test WHERE int = 1 OR keyword IN ('foo', 'bar', 2)"));
-    }
-
-    public void testInWithDifferentDataTypesFromLeftValue_WhereClause() {
-        assertEquals("1:38: expected data type [keyword], value provided is of type [integer]",
-            error("SELECT * FROM test WHERE keyword IN (1, 2)"));
-    }
-
-    public void testInNestedWithDifferentDataTypesFromLeftValue_WhereClause() {
-        assertEquals("1:49: expected data type [keyword], value provided is of type [integer]",
-            error("SELECT * FROM test WHERE int = 1 OR keyword IN (1, 2)"));
     }
 
     public void testInWithFieldInListOfValues() {
@@ -479,7 +555,7 @@ public class VerifierErrorMessagesTests extends ESTestCase {
     public void testInvalidTypeForNumericFunction_WithTwoArgs() {
         assertEquals("1:8: first argument of [TRUNCATE('foo', 2)] must be [numeric], found value ['foo'] type [keyword]",
             error("SELECT TRUNCATE('foo', 2)"));
-        assertEquals("1:8: second argument of [TRUNCATE(1.2, 'bar')] must be [numeric], found value ['bar'] type [keyword]",
+        assertEquals("1:8: second argument of [TRUNCATE(1.2, 'bar')] must be [integer], found value ['bar'] type [keyword]",
             error("SELECT TRUNCATE(1.2, 'bar')"));
     }
 
@@ -535,10 +611,16 @@ public class VerifierErrorMessagesTests extends ESTestCase {
             error("SELECT INSERT('text', 1, 2, 3)"));
     }
 
-    public void testInvalidTypeForRegexMatch() {
+    public void testInvalidTypeForLikeMatch() {
         assertEquals("1:26: [text LIKE 'foo'] cannot operate on field of data type [text]: " +
                 "No keyword/multi-field defined exact matches for [text]; define one or use MATCH/QUERY instead",
             error("SELECT * FROM test WHERE text LIKE 'foo'"));
+    }
+    
+    public void testInvalidTypeForRLikeMatch() {
+        assertEquals("1:26: [text RLIKE 'foo'] cannot operate on field of data type [text]: " +
+                "No keyword/multi-field defined exact matches for [text]; define one or use MATCH/QUERY instead",
+            error("SELECT * FROM test WHERE text RLIKE 'foo'"));
     }
     
     public void testAllowCorrectFieldsInIncompatibleMappings() {
@@ -577,32 +659,47 @@ public class VerifierErrorMessagesTests extends ESTestCase {
                 incompatibleError("SELECT languages FROM \"*\" ORDER BY SIGN(ABS(emp_no))"));
     }
 
-    public void testConditionalWithDifferentDataTypes_SelectClause() {
+    public void testConditionalWithDifferentDataTypes() {
         @SuppressWarnings("unchecked")
         String function = randomFrom(IfNull.class, NullIf.class).getSimpleName();
-        assertEquals("1:" + (22 + function.length()) +
-                ": expected data type [integer], value provided is of type [keyword]",
-            error("SELECT 1 = 1  OR " + function + "(3, '4') > 1"));
+        assertEquals("1:17: 2nd argument of [" + function + "(3, '4')] must be [integer], found value ['4'] type [keyword]",
+            error("SELECT 1 = 1 OR " + function + "(3, '4') > 1"));
 
         @SuppressWarnings("unchecked")
-        String arbirtraryArgsfunction = randomFrom(Coalesce.class, Greatest.class, Least.class).getSimpleName();
-        assertEquals("1:" + (34 + arbirtraryArgsfunction.length()) +
-                ": expected data type [integer], value provided is of type [keyword]",
-            error("SELECT 1 = 1  OR " + arbirtraryArgsfunction + "(null, null, 3, '4') > 1"));
+        String arbirtraryArgsFunction = randomFrom(Coalesce.class, Greatest.class, Least.class).getSimpleName();
+        assertEquals("1:17: 3rd argument of [" + arbirtraryArgsFunction + "(null, 3, '4')] must be [integer], " +
+                "found value ['4'] type [keyword]",
+            error("SELECT 1 = 1 OR " + arbirtraryArgsFunction + "(null, 3, '4') > 1"));
     }
 
-    public void testConditionalWithDifferentDataTypes_WhereClause() {
-        @SuppressWarnings("unchecked")
-        String function = randomFrom(IfNull.class, NullIf.class).getSimpleName();
-        assertEquals("1:" + (34 + function.length()) +
-                ": expected data type [keyword], value provided is of type [integer]",
-            error("SELECT * FROM test WHERE " + function + "('foo', 4) > 1"));
+    public void testCaseWithNonBooleanConditionExpression() {
+        assertEquals("1:8: condition of [WHEN abs(int) THEN 'foo'] must be [boolean], found value [abs(int)] type [integer]",
+            error("SELECT CASE WHEN int = 1 THEN 'one' WHEN abs(int) THEN 'foo' END FROM test"));
+    }
 
-        @SuppressWarnings("unchecked")
-        String arbirtraryArgsfunction = randomFrom(Coalesce.class, Greatest.class, Least.class).getSimpleName();
-        assertEquals("1:" + (46 + arbirtraryArgsfunction.length()) +
-                ": expected data type [keyword], value provided is of type [integer]",
-            error("SELECT * FROM test WHERE " + arbirtraryArgsfunction + "(null, null, 'foo', 4) > 1"));
+    public void testCaseWithDifferentResultDataTypes() {
+        assertEquals("1:8: result of [WHEN int > 10 THEN 10] must be [keyword], found value [10] type [integer]",
+            error("SELECT CASE WHEN int > 20 THEN 'foo' WHEN int > 10 THEN 10 ELSE 'bar' END FROM test"));
+    }
+
+    public void testCaseWithDifferentResultAndDefaultValueDataTypes() {
+        assertEquals("1:8: ELSE clause of [date] must be [keyword], found value [date] type [datetime]",
+            error("SELECT CASE WHEN int > 20 THEN 'foo' ELSE date END FROM test"));
+    }
+
+    public void testCaseWithDifferentResultAndDefaultValueDataTypesAndNullTypesSkipped() {
+        assertEquals("1:8: ELSE clause of [date] must be [keyword], found value [date] type [datetime]",
+            error("SELECT CASE WHEN int > 20 THEN null WHEN int > 10 THEN null WHEN int > 5 THEN 'foo' ELSE date END FROM test"));
+    }
+
+    public void testIifWithNonBooleanConditionExpression() {
+        assertEquals("1:8: first argument of [IIF(int, 'one', 'zero')] must be [boolean], found value [int] type [integer]",
+            error("SELECT IIF(int, 'one', 'zero') FROM test"));
+    }
+
+    public void testIifWithDifferentResultAndDefaultValueDataTypes() {
+        assertEquals("1:8: third argument of [IIF(int > 20, 'foo', date)] must be [keyword], found value [date] type [datetime]",
+            error("SELECT IIF(int > 20, 'foo', date) FROM test"));
     }
 
     public void testAggsInWhere() {
@@ -749,5 +846,82 @@ public class VerifierErrorMessagesTests extends ESTestCase {
 
     public void testProjectUnresolvedAliasInFilter() {
         assertEquals("1:8: Unknown column [tni]", error("SELECT tni AS i FROM test WHERE i > 10 GROUP BY i"));
+    }
+
+    public void testGeoShapeInWhereClause() {
+        assertEquals("1:49: geo shapes cannot be used for filtering",
+            error("SELECT ST_AsWKT(shape) FROM test WHERE ST_AsWKT(shape) = 'point (10 20)'"));
+
+        // We get only one message back because the messages are grouped by the node that caused the issue
+        assertEquals("1:46: geo shapes cannot be used for filtering",
+            error("SELECT MAX(ST_X(shape)) FROM test WHERE ST_Y(shape) > 10 GROUP BY ST_GEOMETRYTYPE(shape) ORDER BY ST_ASWKT(shape)"));
+    }
+
+    public void testGeoShapeInGroupBy() {
+        assertEquals("1:44: geo shapes cannot be used in grouping",
+            error("SELECT ST_X(shape) FROM test GROUP BY ST_X(shape)"));
+    }
+
+    public void testGeoShapeInOrderBy() {
+        assertEquals("1:44: geo shapes cannot be used for sorting",
+            error("SELECT ST_X(shape) FROM test ORDER BY ST_Z(shape)"));
+    }
+
+    public void testGeoShapeInSelect() {
+        accept("SELECT ST_X(shape) FROM test");
+    }
+
+    //
+    // Pivot verifications
+    //
+    public void testPivotNonExactColumn() {
+        assertEquals("1:72: Field [text] of data type [text] cannot be used for grouping;"
+                + " No keyword/multi-field defined exact matches for [text]; define one or use MATCH/QUERY instead",
+                error("SELECT * FROM (SELECT int, text, keyword FROM test) " + "PIVOT(AVG(int) FOR text IN ('bla'))"));
+    }
+
+    public void testPivotColumnUsedInsteadOfAgg() {
+        assertEquals("1:59: No aggregate function found in PIVOT at [int]",
+                error("SELECT * FROM (SELECT int, keyword, bool FROM test) " + "PIVOT(int FOR keyword IN ('bla'))"));
+    }
+
+    public void testPivotScalarUsedInsteadOfAgg() {
+        assertEquals("1:59: No aggregate function found in PIVOT at [ROUND(int)]",
+                error("SELECT * FROM (SELECT int, keyword, bool FROM test) " + "PIVOT(ROUND(int) FOR keyword IN ('bla'))"));
+    }
+
+    public void testPivotScalarUsedAlongSideAgg() {
+        assertEquals("1:59: Non-aggregate function found in PIVOT at [AVG(int) + ROUND(int)]",
+                error("SELECT * FROM (SELECT int, keyword, bool FROM test) " + "PIVOT(AVG(int) + ROUND(int) FOR keyword IN ('bla'))"));
+    }
+
+    public void testPivotValueNotFoldable() {
+        assertEquals("1:91: Non-literal [bool] found inside PIVOT values",
+                error("SELECT * FROM (SELECT int, keyword, bool FROM test) " + "PIVOT(AVG(int) FOR keyword IN ('bla', bool))"));
+    }
+
+    public void testPivotWithFunctionInput() {
+        assertEquals("1:37: No functions allowed (yet); encountered [YEAR(date)]",
+                error("SELECT * FROM (SELECT int, keyword, YEAR(date) FROM test) " + "PIVOT(AVG(int) FOR keyword IN ('bla'))"));
+    }
+
+    public void testPivotWithFoldableFunctionInValues() {
+        assertEquals("1:85: Non-literal [UCASE('bla')] found inside PIVOT values",
+                error("SELECT * FROM (SELECT int, keyword, bool FROM test) " + "PIVOT(AVG(int) FOR keyword IN ( UCASE('bla') ))"));
+    }
+
+    public void testPivotWithNull() {
+        assertEquals("1:85: Null not allowed as a PIVOT value",
+                error("SELECT * FROM (SELECT int, keyword, bool FROM test) " + "PIVOT(AVG(int) FOR keyword IN ( null ))"));
+    }
+
+    public void testPivotValuesHaveDifferentTypeThanColumn() {
+        assertEquals("1:81: Literal ['bla'] of type [keyword] does not match type [boolean] of PIVOT column [bool]",
+                error("SELECT * FROM (SELECT int, keyword, bool FROM test) " + "PIVOT(AVG(int) FOR bool IN ('bla'))"));
+    }
+
+    public void testPivotValuesWithMultipleDifferencesThanColumn() {
+        assertEquals("1:81: Literal ['bla'] of type [keyword] does not match type [boolean] of PIVOT column [bool]",
+                error("SELECT * FROM (SELECT int, keyword, bool FROM test) " + "PIVOT(AVG(int) FOR bool IN ('bla', true))"));
     }
 }

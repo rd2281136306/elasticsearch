@@ -24,7 +24,6 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.LatchedActionListener;
 import org.elasticsearch.action.admin.cluster.settings.ClusterUpdateSettingsRequest;
 import org.elasticsearch.action.admin.cluster.settings.ClusterUpdateSettingsResponse;
-import org.elasticsearch.action.admin.indices.close.CloseIndexRequest;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
 import org.elasticsearch.action.support.ActiveShardCount;
 import org.elasticsearch.client.ESRestHighLevelClientTestCase;
@@ -53,6 +52,7 @@ import org.elasticsearch.client.ccr.ResumeFollowRequest;
 import org.elasticsearch.client.ccr.UnfollowRequest;
 import org.elasticsearch.client.core.AcknowledgedResponse;
 import org.elasticsearch.client.core.BroadcastResponse;
+import org.elasticsearch.client.indices.CloseIndexRequest;
 import org.elasticsearch.client.indices.CreateIndexRequest;
 import org.elasticsearch.client.indices.CreateIndexResponse;
 import org.elasticsearch.common.xcontent.XContentHelper;
@@ -425,7 +425,7 @@ public class CCRDocumentationIT extends ESRestHighLevelClientTestCase {
         AcknowledgedResponse pauseFollowResponse = client.ccr().pauseFollow(pauseFollowRequest, RequestOptions.DEFAULT);
         assertTrue(pauseFollowResponse.isAcknowledged());
 
-        final String followerCluster = highLevelClient().info(RequestOptions.DEFAULT).getClusterName().value();
+        final String followerCluster = highLevelClient().info(RequestOptions.DEFAULT).getClusterName();
         final Request statsRequest = new Request("GET", "/follower/_stats");
         final Response statsResponse = client().performRequest(statsRequest);
         final ObjectPath statsObjectPath = ObjectPath.createFromResponse(statsResponse);

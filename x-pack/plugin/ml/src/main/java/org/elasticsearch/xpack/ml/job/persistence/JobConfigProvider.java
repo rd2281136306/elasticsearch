@@ -54,6 +54,7 @@ import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.fetch.subphase.FetchSourceContext;
 import org.elasticsearch.search.sort.SortOrder;
+import org.elasticsearch.xpack.core.action.util.ExpandedIdsMatcher;
 import org.elasticsearch.xpack.core.ml.datafeed.DatafeedConfig;
 import org.elasticsearch.xpack.core.ml.datafeed.DatafeedJobValidator;
 import org.elasticsearch.xpack.core.ml.job.config.AnalysisConfig;
@@ -69,7 +70,6 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -94,12 +94,7 @@ public class JobConfigProvider {
 
     private static final Logger logger = LogManager.getLogger(JobConfigProvider.class);
 
-    public static final Map<String, String> TO_XCONTENT_PARAMS;
-    static {
-        Map<String, String> modifiable = new HashMap<>();
-        modifiable.put(ToXContentParams.FOR_INTERNAL_STORAGE, "true");
-        TO_XCONTENT_PARAMS = Collections.unmodifiableMap(modifiable);
-    }
+    public static final Map<String, String> TO_XCONTENT_PARAMS = Collections.singletonMap(ToXContentParams.FOR_INTERNAL_STORAGE, "true");
 
     private final Client client;
     private final NamedXContentRegistry xContentRegistry;
@@ -129,7 +124,7 @@ public class JobConfigProvider {
             executeAsyncWithOrigin(client, ML_ORIGIN, IndexAction.INSTANCE, indexRequest, ActionListener.wrap(
                     listener::onResponse,
                     e -> {
-                        if (e instanceof VersionConflictEngineException) {
+                        if (ExceptionsHelper.unwrapCause(e) instanceof VersionConflictEngineException) {
                             // the job already exists
                             listener.onFailure(ExceptionsHelper.jobAlreadyExists(job.getId()));
                         } else {
@@ -414,7 +409,7 @@ public class JobConfigProvider {
      * For the list of job Ids find all that match existing jobs Ids.
      * The repsonse is all the job Ids in {@code ids} that match an existing
      * job Id.
-     * @param ids Job Ids to find 
+     * @param ids Job Ids to find
      * @param listener The matched Ids listener
      */
     public void jobIdMatches(List<String> ids, ActionListener<List<String>> listener) {
@@ -546,21 +541,6 @@ public class JobConfigProvider {
                         listener::onFailure)
                 , client::search);
 
-    }
-
-    private SearchRequest makeExpandIdsSearchRequest(String expression, boolean excludeDeleting) {
-        String [] tokens = ExpandedIdsMatcher.tokenizeExpression(expression);
-        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder().query(buildQuery(tokens, excludeDeleting));
-        sourceBuilder.sort(Job.ID.getPreferredName());
-        sourceBuilder.fetchSource(false);
-        sourceBuilder.docValueField(Job.ID.getPreferredName(), null);
-        sourceBuilder.docValueField(Job.GROUPS.getPreferredName(), null);
-
-        return client.prepareSearch(AnomalyDetectorsIndex.configIndexName())
-                .setIndicesOptions(IndicesOptions.lenientExpandOpen())
-                .setSource(sourceBuilder)
-                .setSize(AnomalyDetectorsIndex.CONFIG_INDEX_MAX_RESULTS_WINDOW)
-                .request();
     }
 
     /**

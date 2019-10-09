@@ -29,7 +29,6 @@ import org.elasticsearch.xpack.core.ml.utils.ToXContentParams;
 
 import java.io.IOException;
 import java.util.Collections;
-import java.util.function.Supplier;
 
 import static org.elasticsearch.xpack.core.ClientHelper.ML_ORIGIN;
 import static org.elasticsearch.xpack.core.ClientHelper.executeAsyncWithOrigin;
@@ -40,8 +39,7 @@ public class TransportPutCalendarAction extends HandledTransportAction<PutCalend
 
     @Inject
     public TransportPutCalendarAction(TransportService transportService, ActionFilters actionFilters, Client client) {
-        super(PutCalendarAction.NAME, transportService, actionFilters,
-            (Supplier<PutCalendarAction.Request>) PutCalendarAction.Request::new);
+        super(PutCalendarAction.NAME, transportService, actionFilters, PutCalendarAction.Request::new);
         this.client = client;
     }
 
@@ -70,7 +68,7 @@ public class TransportPutCalendarAction extends HandledTransportAction<PutCalend
 
                     @Override
                     public void onFailure(Exception e) {
-                        if (e instanceof VersionConflictEngineException) {
+                        if (ExceptionsHelper.unwrapCause(e) instanceof VersionConflictEngineException) {
                             listener.onFailure(ExceptionsHelper.badRequestException("Cannot create calendar with id [" +
                                     calendar.getId() + "] as it already exists"));
                         } else {

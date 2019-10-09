@@ -20,8 +20,6 @@
 package org.elasticsearch.index.query.plugin;
 
 import org.elasticsearch.index.query.BoolQueryBuilder;
-import org.elasticsearch.index.query.QueryShardContext;
-import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.junit.Before;
@@ -34,11 +32,6 @@ import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitC
 public class CustomQueryParserIT extends ESIntegTestCase {
     @Override
     protected Collection<Class<? extends Plugin>> nodePlugins() {
-        return Arrays.asList(DummyQueryParserPlugin.class);
-    }
-
-    @Override
-    protected Collection<Class<? extends Plugin>> transportClientPlugins() {
         return Arrays.asList(DummyQueryParserPlugin.class);
     }
 
@@ -63,11 +56,5 @@ public class CustomQueryParserIT extends ESIntegTestCase {
 
     public void testCustomDummyQueryWithinBooleanQuery() {
         assertHitCount(client().prepareSearch("index").setQuery(new BoolQueryBuilder().must(new DummyQueryBuilder())).get(), 1L);
-    }
-
-    private static QueryShardContext queryShardContext() {
-        IndicesService indicesService = internalCluster().getDataNodeInstance(IndicesService.class);
-        return indicesService.indexServiceSafe(resolveIndex("index")).newQueryShardContext(
-                randomInt(20), null, () -> { throw new UnsupportedOperationException(); }, null);
     }
 }
